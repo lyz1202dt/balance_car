@@ -3,20 +3,21 @@
 #include <controller_interface/controller_interface.hpp>
 #include <iomanip>
 #include <pluginlib/class_list_macros.hpp>
-#include <robot_interfaces/msg/detail/wheel__struct.hpp>
+#include <robot_interfaces/msg/detail/wheel_exp__struct.hpp>
+#include <robot_interfaces/msg/wheel.hpp>
+#include <robot_interfaces/msg/wheel_exp.hpp>
 
 namespace car_controller {
 CarController::CarController() {}
 
 controller_interface::CallbackReturn CarController::on_init() {
-    state_publisher   = get_node()->create_publisher<robot_interfaces::msg::Wheel>("legs_status", 10);
-    target_subscriber = get_node()->create_subscription<robot_interfaces::msg::Wheel>(
-        "legs_target", 10, [this](const robot_interfaces::msg::Wheel& msg) { wheel_target = msg; });
+    state_publisher   = get_node()->create_publisher<robot_interfaces::msg::Wheel>("wheels_status", 10);
+    target_subscriber = get_node()->create_subscription<robot_interfaces::msg::WheelExp>(
+        "wheels_target", 10, [this](const robot_interfaces::msg::WheelExp& msg) { wheel_target = msg; });
     wheel_name_ = {"left_wheel_joint", "right_wheel_joint"};
 
 
     auto node = get_node();
-    node->declare_parameter("wheel_kd", 0.12);
     node->declare_parameter("joint_torque_filter_gate", 0.8);
     node->declare_parameter("joint_omega_filter_gate", 0.8);
 
@@ -24,9 +25,7 @@ controller_interface::CallbackReturn CarController::on_init() {
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
         for (const auto& param : params) {
-            if (param.get_name() == "wheel_kd")
-                wheel_kd = param.as_double();
-            else if (param.get_name() == "joint_torque_filter_gate")                 // 设置电机力矩低通滤波器增益
+            if (param.get_name() == "joint_torque_filter_gate")                 // 设置电机力矩低通滤波器增益
                 joint_torque_filter_gate = param.as_double();
             else if (param.get_name() == "joint_omega_filter_gate")                  // 设置电机转速低通滤波器增益
                 joint_omega_filter_gate = param.as_double();
@@ -41,11 +40,11 @@ controller_interface::CallbackReturn CarController::on_configure(const rclcpp_li
     (void)previous_state;
     auto node = get_node();
 
-    wheel_kd = node->get_parameter("wheel_kd").as_double();
     wheel_target.left_omega=0.0f;
     wheel_target.right_omega=0.0f;
     wheel_target.left_torque=0.0f;
     wheel_target.right_torque=0.0f;
+    wheel_target.kd=0.0f;
     return controller_interface::ControllerInterface::CallbackReturn::SUCCESS;
 }
 controller_interface::CallbackReturn CarController::on_activate(const rclcpp_lifecycle::State& previous_state) {
@@ -67,6 +66,7 @@ controller_interface::return_type CarController::update(const rclcpp::Time& time
     wheel_state.right_torque = static_cast<float>(state_interfaces_[3].get_value());
     state_publisher->publish(wheel_state);                                           // 发布轮子状态
 
+    wheel_kd=wheel_target.kd;
     double left_effort  = wheel_kd * (wheel_target.left_omega - wheel_state.left_omega) + wheel_target.left_torque;
     double right_effort = wheel_kd * (wheel_target.right_omega - wheel_state.right_omega) + wheel_target.right_torque;
     left_effort         = std::clamp(left_effort, -5.0, 5.0);

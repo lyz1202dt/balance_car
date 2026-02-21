@@ -2,6 +2,7 @@
 #include <controller_interface/controller_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
+#include <robot_interfaces/msg/detail/wheel_exp__struct.hpp>
 #include <string>
 #include <chrono>
 
@@ -21,11 +22,11 @@ public:
 
 private:
     rclcpp::Publisher<robot_interfaces::msg::Wheel>::SharedPtr state_publisher;
-    rclcpp::Subscription<robot_interfaces::msg::Wheel>::SharedPtr target_subscriber;
+    rclcpp::Subscription<robot_interfaces::msg::WheelExp>::SharedPtr target_subscriber;
     std::vector<std::string> wheel_name_;
     rclcpp_lifecycle::LifecycleNode::OnSetParametersCallbackHandle::SharedPtr param_cb_;
 
-    robot_interfaces::msg::Wheel wheel_target;
+    robot_interfaces::msg::WheelExp wheel_target;
     robot_interfaces::msg::Wheel wheel_state;
 
     double joint_torque_filter_gate{0.8};
