@@ -1,0 +1,19 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 500
+
+    # 控制器声明：必须在这里定义控制器名称和类型
+    car_controller:
+      type: car_controller/CarController
+
+# 具体控制器的参数配置：必须与 controller_manager 同级
+car_controller:
+  ros__parameters:
+    joints:
+      - left_wheel_joint
+      - right_wheel_joint
+    command_interfaces:
+      - effort
+    state_interfaces:
+      - velocity
+      - effort

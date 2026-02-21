@@ -1,0 +1,48 @@
+<mujoco model="balance_car">
+    <compiler angle="radian" />
+
+    <worldbody>
+        <body name="base_link">
+            <inertial pos="0 0 0.2" mass="1" diaginertia="0.0088 0.0081 0.0024" />
+            <joint name="floating_base" type="free" />
+            <geom size="0.06 0.072 0.15" pos="0 0 0.2" type="box" rgba="0.1 0.1 0.1 1" />
+            <site name="imu" pos="0 0 0.056203" size="0.01"/>
+            <body name="left_wheel" pos="0 0.1 0.05">
+                <inertial pos="0 0 0" quat="0.5 0.5 0.5 0.5" mass="0.2"
+                    diaginertia="0.000425 0.000425 0.00025" />
+                <joint name="left_wheel_joint" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-10 10" />
+                <geom size="0.05 0.02" quat="0.707105 0.707108 0 0" type="cylinder"
+                    rgba="0.2 0.2 0.2 1" />
+            </body>
+            <body name="right_wheel" pos="0 -0.1 0.05">
+                <inertial pos="0 0 0" quat="0.5 0.5 0.5 0.5" mass="0.2"
+                    diaginertia="0.000425 0.000425 0.00025" />
+                <joint name="right_wheel_joint" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-10 10" />
+                <geom size="0.05 0.02" quat="0.707105 0.707108 0 0" type="cylinder"
+                    rgba="0.2 0.2 0.2 1" />
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <motor name="left_motor" joint="left_wheel_joint" gear="1" ctrllimited="true" ctrlrange="-5 5" />
+        <motor name="right_motor" joint="right_wheel_joint" gear="1" ctrllimited="true" ctrlrange="-5 5" />
+    </actuator>
+
+
+    <sensor>
+        <!-- actuator velocity -->
+        <actuatorvel name="left_motor_v" actuator="left_motor" />
+        <actuatorvel name="right_motor_v" actuator="right_motor" />
+
+        <!-- actuator force -->
+        <actuatorfrc name="left_motor_f" actuator="left_motor" noise="1e-3" />
+        <actuatorfrc name="right_motor_f" actuator="right_motor" noise="1e-3" />
+
+        <!-- IMU (imu_main): pose/orientation + acceleration + angular velocity -->
+        <accelerometer name="imu_main_acc" site="imu" />
+        <gyro name="imu_main_gyro" site="imu" />
+        <framequat name="imu_main_quat" objtype="site" objname="imu" />
+    </sensor>
+
+</mujoco>

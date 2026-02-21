@@ -1,0 +1,150 @@
+<?xml version="1.0"?>
+<robot name="balance_car">
+
+
+    <ros2_control name="dog_system" type="system">
+
+        <hardware>
+            <plugin>mujoco_ros2_control/MujocoSystem</plugin>
+        </hardware>
+
+        <joint name="left_wheel_joint">
+            <command_interface name="effort" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
+
+        <joint name="right_wheel_joint">
+            <command_interface name="effort" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
+    </ros2_control>
+
+
+    <!-- 世界坐标系 -->
+    <link name="world" />
+
+    <!-- 世界坐标系与base_link的6自由度浮动关节 -->
+    <joint name="floating_base" type="floating">
+        <parent link="world" />
+        <child link="base_link" />
+        <origin xyz="0 0 0" rpy="0 0 0" />
+    </joint>
+
+    <!-- 车体主体（长方体） -->
+    <link name="base_link">
+        <inertial>
+            <!-- 质量：1kg -->
+            <mass value="1.0" />
+            <!-- 惯性张量（对于长方体） -->
+            <!-- 宽度增加1.8倍：0.08*1.8=0.144m -->
+            <!-- Ixx = (m/12)*(Ly^2 + Lz^2) = (1/12)*(0.144^2 + 0.3^2) = 0.0088 -->
+            <!-- Iyy = (m/12)*(Lx^2 + Lz^2) = (1/12)*(0.12^2 + 0.3^2) = 0.0081 -->
+            <!-- Izz = (m/12)*(Lx^2 + Ly^2) = (1/12)*(0.12^2 + 0.144^2) = 0.0024 -->
+            <inertia ixx="0.0088" ixy="0.0" ixz="0.0" iyy="0.0081" iyz="0.0" izz="0.0024" />
+            <origin xyz="0 0 0.20" rpy="0 0 0" />
+        </inertial>
+        <visual>
+            <geometry>
+                <box size="0.12 0.144 0.3" />
+            </geometry>
+            <origin xyz="0 0 0.20" rpy="0 0 0" />
+            <material name="body_color">
+                <color rgba="0.1 0.1 0.1 1.0" />
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <box size="0.12 0.144 0.3" />
+            </geometry>
+            <origin xyz="0 0 0.20" rpy="0 0 0" />
+        </collision>
+    </link>
+
+    <!-- 左轮 -->
+    <link name="left_wheel">
+        <inertial>
+            <!-- 轮子质量：0.2kg -->
+            <mass value="0.2" />
+            <!-- 圆柱体惯性张量：I = (m/12)*(3*r^2 + h^2) 绕轴向 -->
+            <!-- 对于半径r=0.05m，厚度h=0.04m的圆柱体 -->
+            <!-- 绕轴向：Ixx = (1/2)*m*r^2 = 0.5*0.2*0.05^2 = 0.00025 -->
+            <!-- 绕径向：Iyy = Izz = (1/12)*m*(3*r^2 + h^2) = (1/12)*0.2*(3*0.05^2 + 0.04^2) = 0.000425 -->
+            <inertia ixx="0.00025" ixy="0.0" ixz="0.0" iyy="0.000425" iyz="0.0" izz="0.000425" />
+            <origin xyz="0 0 0" rpy="0 0 0" />
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.05" length="0.04" />
+            </geometry>
+            <origin xyz="0 0 0" rpy="1.5708 0 0" />
+            <material name="wheel_color">
+                <color rgba="0.2 0.2 0.2 1.0" />
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.05" length="0.04" />
+            </geometry>
+            <origin xyz="0 0 0" rpy="1.5708 0 0" />
+        </collision>
+    </link>
+
+    <!-- 右轮 -->
+    <link name="right_wheel">
+        <inertial>
+            <!-- 轮子质量：0.2kg -->
+            <mass value="0.2" />
+            <!-- 圆柱体惯性张量 -->
+            <inertia ixx="0.00025" ixy="0.0" ixz="0.0" iyy="0.000425" iyz="0.0" izz="0.000425" />
+            <origin xyz="0 0 0" rpy="0 0 0" />
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.05" length="0.04" />
+            </geometry>
+            <origin xyz="0 0 0" rpy="1.5708 0 0" />
+            <material name="wheel_color">
+                <color rgba="0.2 0.2 0.2 1.0" />
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.05" length="0.04" />
+            </geometry>
+            <origin xyz="0 0 0" rpy="1.5708 0 0" />
+        </collision>
+    </link>
+
+    <!-- 左轮与车体的连接关节（连续转动） -->
+    <joint name="left_wheel_joint" type="continuous">
+        <!-- 关节轴向为X轴，使轮子绕X轴转动，车辆沿X轴前后移动 -->
+        <axis xyz="0 1 0" />
+        <parent link="base_link" />
+        <child link="left_wheel" />
+
+        <origin xyz="0 0.10 0.05" rpy="0 0 0" />
+        <limit effort="10" velocity="10" />
+    </joint>
+
+    <!-- 右轮与车体的连接关节（连续转动） -->
+    <joint name="right_wheel_joint" type="continuous">
+        <!-- 关节轴向为X轴，使轮子绕X轴转动，车辆沿X轴前后移动 -->
+        <axis xyz="0 1 0" />
+        <parent link="base_link" />
+        <child link="right_wheel" />
+        <!-- 右轮在Y方向距离为-0.10m -->
+        <origin xyz="0 -0.10 0.05" rpy="0 0 0" />
+        <limit effort="10" velocity="10" />
+    </joint>
+
+    <!-- 材料定义 -->
+    <material name="body_color">
+        <color rgba="0.1 0.1 0.1 1.0" />
+    </material>
+    <material name="wheel_color">
+        <color rgba="0.2 0.2 0.2 1.0" />
+    </material>
+
+</robot>
