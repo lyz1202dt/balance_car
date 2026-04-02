@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -16,6 +17,8 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <tf2/LinearMath/Matrix3x3.hpp>
 #include <tf2/LinearMath/Quaternion.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 
 
 class RobotController
@@ -28,7 +31,6 @@ class RobotController
     private:
     void controller_init();
     void update();
-    void quaternionLowPassFilter(double& w, double& x, double& y, double& z, double w1, double x1, double y1, double z1, double alpha);
 
     rclcpp::Node::SharedPtr node_;
 
@@ -37,16 +39,21 @@ class RobotController
     //更新定时器
     rclcpp::TimerBase::SharedPtr update_timer;
     //IMU信息订阅
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr imu_sub;
-    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr imu_angular_vel_sub;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_state_sub;
+    //位姿信息订阅
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr posture_sub;
     //轮子状态订阅
-    rclcpp::Subscription<robot_interfaces::msg::Wheel>::SharedPtr state_sub;
+    rclcpp::Subscription<robot_interfaces::msg::Wheel>::SharedPtr wheel_state_sub;
     //轮子期望发布
     rclcpp::Publisher<robot_interfaces::msg::WheelExp>::SharedPtr target_pub;
+    //TF广播器
+    std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-
-    tf2::Quaternion robot_rotation;                    //机器人姿态
+    tf2::Quaternion robot_rotation;                    //机器人状态信息
+    geometry_msgs::msg::PoseStamped robot_posture;
     geometry_msgs::msg::Twist robot_velocity;
+    sensor_msgs::msg::Imu robot_imu;
+    robot_interfaces::msg::Wheel wheel_state;
     double direction_filter_gate{0.5};
 };
 

@@ -49,11 +49,19 @@ def generate_launch_description():
         output="screen",
     )
 
+    joint_state_broadcaster = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
+        output="screen",
+    )
+
     load_controllers = RegisterEventHandler(    #仿真环境一旦加载完成，开始加载控制器
         OnProcessStart(
             target_action=mujoco,
             on_start=[
                 LogInfo(msg="Starting control"),
+                joint_state_broadcaster,
                 joint_controller,
             ],
         )

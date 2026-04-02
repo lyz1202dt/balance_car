@@ -23,7 +23,7 @@ find_package(Eigen3 REQUIRED PATHS /usr/include/eigen3)
 add_executable(move_control
 src/main.cpp
 src/controller.cpp
-src/lqr.cpp
+src/nmpc.cpp
 )
 
 target_include_directories(move_control

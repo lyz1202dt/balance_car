@@ -23,9 +23,9 @@ def generate_launch_description():
         parameters=[{"robot_description": robot_desc}]
     )
 
-    leg_calc = Node(
-        package="leg_calc",
-        executable="leg_calc"
+    move_control = Node(
+        package="move_control",
+        executable="move_control"
     )
 
     rviz2_config_path=os.path.join(
@@ -43,4 +43,4 @@ def generate_launch_description():
     PythonLaunchDescriptionSource([os.path.join(
         get_package_share_directory('launch_pack'), 'launch', simulate_env_launch_scripe)]))
     
-    return LaunchDescription([robot_state_pub,  leg_calc , rviz2 ,sim_launch])
+    return LaunchDescription([robot_state_pub, move_control , rviz2 ,sim_launch])

@@ -8,6 +8,15 @@
 #include <robot_interfaces/msg/wheel_exp.hpp>
 
 namespace car_controller {
+namespace {
+constexpr size_t kLeftWheelVelocityIndex = 0;
+constexpr size_t kLeftWheelEffortIndex = 1;
+constexpr size_t kRightWheelVelocityIndex = 2;
+constexpr size_t kRightWheelEffortIndex = 3;
+constexpr size_t kExpectedStateInterfaceCount = 4;
+constexpr size_t kExpectedCommandInterfaceCount = 2;
+}  // namespace
+
 CarController::CarController() {}
 
 controller_interface::CallbackReturn CarController::on_init() {
@@ -59,11 +68,22 @@ controller_interface::CallbackReturn CarController::on_deactivate(const rclcpp_l
 controller_interface::return_type CarController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     (void)time;
     (void)period;
-    
-    wheel_state.left_omega   = static_cast<float>(state_interfaces_[0].get_value()); // 获取力矩
-    wheel_state.left_torque  = static_cast<float>(state_interfaces_[1].get_value());
-    wheel_state.right_omega  = static_cast<float>(state_interfaces_[2].get_value());
-    wheel_state.right_torque = static_cast<float>(state_interfaces_[3].get_value());
+
+    if (state_interfaces_.size() != kExpectedStateInterfaceCount || command_interfaces_.size() != kExpectedCommandInterfaceCount) {
+        RCLCPP_ERROR_THROTTLE(
+            get_node()->get_logger(),
+            *get_node()->get_clock(),
+            2000,
+            "Unexpected interface count. state=%zu command=%zu",
+            state_interfaces_.size(),
+            command_interfaces_.size());
+        return controller_interface::return_type::ERROR;
+    }
+
+    wheel_state.left_omega = static_cast<float>(state_interfaces_[kLeftWheelVelocityIndex].get_value());
+    wheel_state.left_torque = static_cast<float>(state_interfaces_[kLeftWheelEffortIndex].get_value());
+    wheel_state.right_omega = static_cast<float>(state_interfaces_[kRightWheelVelocityIndex].get_value());
+    wheel_state.right_torque = static_cast<float>(state_interfaces_[kRightWheelEffortIndex].get_value());
     state_publisher->publish(wheel_state);                                           // 发布轮子状态
 
     wheel_kd=wheel_target.kd;

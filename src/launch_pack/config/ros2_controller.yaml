@@ -3,6 +3,9 @@ controller_manager:
     update_rate: 500
 
     # 控制器声明：必须在这里定义控制器名称和类型
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
     car_controller:
       type: car_controller/CarController
 
