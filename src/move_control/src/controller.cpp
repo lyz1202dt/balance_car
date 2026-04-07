@@ -1,81 +1,143 @@
-#include <chrono>
-#include <move_control/controller.hpp>
-#include <robot_interfaces/msg/detail/wheel_exp__struct.hpp>
+#include "move_control/controller.hpp"
 
-using namespace std::chrono_literals;
+#include <algorithm>
+#include <cmath>
+#include <sstream>
 
-RobotController::RobotController(const rclcpp::Node::SharedPtr node) {
-    node_ = node;
-
-    robot_rotation.setRPY(0.0, 0.0, 0.0);
-
-    node_->declare_parameter("direction_filter_gate", 0.5);
-
-    param_server_ = node_->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = true;
-        RCLCPP_INFO(node_->get_logger(), "更新参数");
-        std::string name;
-        for (const auto& param : params) {
-            name = param.get_name();
-            if (name == "direction_filter_gate") {
-                direction_filter_gate = param.as_double();
-            }
-        }
-        return result;
-    });
-
-    node_->get_parameter("direction_filter_gate", direction_filter_gate);                       // 设置参数初始值
-
-
-    target_pub = node_->create_publisher<robot_interfaces::msg::WheelExp>("wheels_target", 10); // 创建期望位置发布者
-
-    posture_sub = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-        "/imu_pose_sensor/pose", rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::PoseStamped& msg) {
-            robot_posture = msg;
-            // 发布world到base_link的纯姿态TF
-            geometry_msgs::msg::TransformStamped transform;
-            transform.header.stamp    = robot_posture.header.stamp;
-            transform.header.frame_id = "world";
-            transform.child_frame_id  = "base_link";
-
-            // 设置位置为原点（纯姿态）
-            transform.transform.translation.x = 0.0;
-            transform.transform.translation.y = 0.0;
-            transform.transform.translation.z = 0.0;
-
-            // 设置旋转（从posture消息中提取）
-            transform.transform.rotation = robot_posture.pose.orientation;
-
-            tf_broadcaster_->sendTransform(transform);
-        });
-
-    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
-
-    imu_state_sub = node_->create_subscription<sensor_msgs::msg::Imu>(
-        "/imu_imu_sensor/imu", rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Imu& msg) { robot_imu = msg; });
-    wheel_state_sub =
-        node_->create_subscription<robot_interfaces::msg::Wheel>("wheels_status", 10, [this](const robot_interfaces::msg::Wheel& msg) {
-            wheel_state = msg;
-            update(); // 进行控制指令更新
-        });
-
-
+RobotController::RobotController(const rclcpp::Node::SharedPtr node)
+    : node_(node) {
     controller_init();
-
-    // update_timer = node_->create_wall_timer(5ms,[this](){
-
-    // });
 }
 
 RobotController::~RobotController() {}
 
-void RobotController::controller_init() {}
+
+void RobotController::controller_init() {
+    imu_topic_ = node_->declare_parameter<std::string>("imu_topic", "/imu");
+    posture_topic_ = node_->declare_parameter<std::string>("posture_topic", "/pose");
+    wheel_topic_ = node_->declare_parameter<std::string>("wheel_topic", "/wheels_status");
+    target_topic_ = node_->declare_parameter<std::string>("target_topic", "/wheels_target");
+    control_period_s_ = node_->declare_parameter<double>("control_period", 0.01);
+    command_limit_ = node_->declare_parameter<double>("command_limit", 5.0);
+
+    imu_state_sub = node_->create_subscription<sensor_msgs::msg::Imu>(
+        imu_topic_, 10, [this](const sensor_msgs::msg::Imu::SharedPtr msg) { imu_callback(msg); });
+    posture_sub = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+        posture_topic_, 10, [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) { posture_callback(msg); });
+    wheel_state_sub = node_->create_subscription<robot_interfaces::msg::Wheel>(
+        wheel_topic_, 10, [this](const robot_interfaces::msg::Wheel::SharedPtr msg) { wheel_state_callback(msg); });
+    target_pub = node_->create_publisher<robot_interfaces::msg::WheelExp>(target_topic_, 10);
+
+    solver_.initialize();
+
+    const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<double>(control_period_s_));
+    update_timer = node_->create_wall_timer(period, [this]() { update(); });
+}
 
 void RobotController::update() {
+    if (!(imu_ready_ && posture_ready_ && wheel_ready_)) {
+        return;
+    }
 
-    // TODO:计算
-    robot_interfaces::msg::WheelExp target;
-    // TODO:填写期望值
-    target_pub->publish(target);
+    const rclcpp::Time now = node_->get_clock()->now();
+    double dt = control_period_s_;
+    if (last_update_time_.nanoseconds() > 0) {
+        dt = std::max(1e-4, (now - last_update_time_).seconds());
+    }
+    last_update_time_ = now;
+
+    if (!wheel_angle_initialized_) {
+        wheel_angle_initialized_ = true;
+    } else {
+        left_wheel_angle_ += static_cast<double>(wheel_state.left_omega) * dt;
+        right_wheel_angle_ += static_cast<double>(wheel_state.right_omega) * dt;
+    }
+
+    const auto current_state = build_current_state(dt);
+    const auto reference_state = build_reference_state(current_state);
+
+    NmpcSolver::InputVector control = NmpcSolver::InputVector::Zero();
+    if (!solver_.solve(current_state, reference_state, control)) {
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 2000, "NMPC solve failed, publishing zero command.");
+        control.setZero();
+    }
+
+    publish_command(control);
+}
+
+void RobotController::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
+    robot_imu = *msg;
+    imu_ready_ = true;
+}
+
+void RobotController::posture_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+    previous_posture_ = robot_posture;
+    robot_posture = *msg;
+    robot_rotation.setX(robot_posture.pose.orientation.x);
+    robot_rotation.setY(robot_posture.pose.orientation.y);
+    robot_rotation.setZ(robot_posture.pose.orientation.z);
+    robot_rotation.setW(robot_posture.pose.orientation.w);
+    posture_ready_ = true;
+}
+
+void RobotController::wheel_state_callback(const robot_interfaces::msg::Wheel::SharedPtr msg) {
+    wheel_state = *msg;
+    wheel_ready_ = true;
+}
+
+NmpcSolver::StateVector RobotController::build_current_state(double dt) const {
+    NmpcSolver::StateVector state = NmpcSolver::StateVector::Zero();
+
+    state(0) = robot_posture.pose.position.x;
+    state(1) = robot_posture.pose.position.y;
+    state(2) = robot_posture.pose.position.z;
+    state(3) = robot_posture.pose.orientation.x;
+    state(4) = robot_posture.pose.orientation.y;
+    state(5) = robot_posture.pose.orientation.z;
+    state(6) = robot_posture.pose.orientation.w;
+    state(7) = std::cos(left_wheel_angle_);
+    state(8) = std::sin(left_wheel_angle_);
+    state(9) = std::cos(right_wheel_angle_);
+    state(10) = std::sin(right_wheel_angle_);
+
+    if (dt > 0.0 && (previous_posture_.header.stamp.sec != 0 || previous_posture_.header.stamp.nanosec != 0)) {
+        state(11) = (robot_posture.pose.position.x - previous_posture_.pose.position.x) / dt;
+        state(12) = (robot_posture.pose.position.y - previous_posture_.pose.position.y) / dt;
+        state(13) = (robot_posture.pose.position.z - previous_posture_.pose.position.z) / dt;
+    }
+
+    state(14) = robot_imu.angular_velocity.x;
+    state(15) = robot_imu.angular_velocity.y;
+    state(16) = robot_imu.angular_velocity.z;
+    state(17) = wheel_state.left_omega;
+    state(18) = wheel_state.right_omega;
+
+    return state;
+}
+
+NmpcSolver::StateVector RobotController::build_reference_state(const NmpcSolver::StateVector & current_state) const {
+    NmpcSolver::StateVector reference = current_state;
+
+    reference(11) = 0.0;
+    reference(12) = 0.0;
+    reference(13) = 0.0;
+    reference(14) = 0.0;
+    reference(15) = 0.0;
+    reference(16) = 0.0;
+    reference(17) = 0.0;
+    reference(18) = 0.0;
+
+    return reference;
+}
+
+void RobotController::publish_command(const NmpcSolver::InputVector & control) const {
+    robot_interfaces::msg::WheelExp msg;
+    msg.left_omega = 0.0F;
+    msg.right_omega = 0.0F;
+    msg.left_torque = static_cast<float>(std::clamp(control(0), -command_limit_, command_limit_));
+    msg.right_torque = static_cast<float>(std::clamp(control(1), -command_limit_, command_limit_));
+    msg.kd = 0.0F;
+    target_pub->publish(msg);
 }

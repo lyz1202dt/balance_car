@@ -20,6 +20,11 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
+#include <std_msgs/msg/string.hpp>
+#include <memory>
+#include <string>
+
+#include "move_control/nmpc_solver.hpp"
 
 class RobotController
 {
@@ -31,8 +36,23 @@ class RobotController
     private:
     void controller_init();
     void update();
+    void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg);
+    void posture_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+    void wheel_state_callback(const robot_interfaces::msg::Wheel::SharedPtr msg);
+    NmpcSolver::StateVector build_current_state(double dt) const;
+    NmpcSolver::StateVector build_reference_state(const NmpcSolver::StateVector & current_state) const;
+    void publish_command(const NmpcSolver::InputVector & control) const;
 
     rclcpp::Node::SharedPtr node_;
+    bool model_loaded_ = false;
+    bool imu_ready_ = false;
+    bool posture_ready_ = false;
+    bool wheel_ready_ = false;
+    bool wheel_angle_initialized_ = false;
+    double left_wheel_angle_ = 0.0;
+    double right_wheel_angle_ = 0.0;
+    rclcpp::Time last_update_time_{0, 0, RCL_ROS_TIME};
+    geometry_msgs::msg::PoseStamped previous_posture_;
 
     //参数服务服务端
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_server_;
@@ -48,12 +68,19 @@ class RobotController
     rclcpp::Publisher<robot_interfaces::msg::WheelExp>::SharedPtr target_pub;
     //TF广播器
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    //robot_description订阅
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_sub_;
 
     tf2::Quaternion robot_rotation;                    //机器人状态信息
     geometry_msgs::msg::PoseStamped robot_posture;
     geometry_msgs::msg::Twist robot_velocity;
     sensor_msgs::msg::Imu robot_imu;
     robot_interfaces::msg::Wheel wheel_state;
-    double direction_filter_gate{0.5};
+    NmpcSolver solver_;
+    std::string imu_topic_;
+    std::string posture_topic_;
+    std::string wheel_topic_;
+    std::string target_topic_;
+    double control_period_s_ = 0.01;
+    double command_limit_ = 5.0;
 };
-
