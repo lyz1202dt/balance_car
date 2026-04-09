@@ -20,7 +20,7 @@ public:
   NmpcSolver & operator=(const NmpcSolver &) = delete;
 
   bool initialize();
-  bool solve(const StateVector & current_state, const StateVector & reference_state, InputVector & control);
+  int solve(const StateVector & current_state, const StateVector & reference_state, InputVector & control);
   bool is_initialized() const;
 
 private:

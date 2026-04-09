@@ -25,7 +25,8 @@ def generate_launch_description():
 
     move_control = Node(
         package="move_control",
-        executable="move_control"
+        executable="move_control",
+        parameters=[{"use_sim_time": True}]
     )
 
     rviz2_config_path=os.path.join(

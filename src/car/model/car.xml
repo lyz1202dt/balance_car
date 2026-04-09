@@ -31,6 +31,10 @@
 
 
     <sensor>
+        <!-- base pose in world frame -->
+        <framepos name="base_link_pos" objtype="body" objname="base_link" reftype="body" refname="world" />
+        <framequat name="base_link_quat" objtype="body" objname="base_link" reftype="body" refname="world" />
+
         <!-- actuator velocity -->
         <actuatorvel name="left_motor_v" actuator="left_motor" />
         <actuatorvel name="right_motor_v" actuator="right_motor" />
@@ -42,7 +46,7 @@
         <!-- IMU (imu_main): pose/orientation + acceleration + angular velocity -->
         <accelerometer name="imu_main_acc" site="imu" />
         <gyro name="imu_main_gyro" site="imu" />
-        <framequat name="imu_main_quat" objtype="site" objname="imu" />
+        <!-- <framequat name="imu_main_quat" objtype="site" objname="imu" /> -->
     </sensor>
 
 </mujoco>

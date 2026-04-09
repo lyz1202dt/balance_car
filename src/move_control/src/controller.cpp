@@ -13,8 +13,8 @@ RobotController::~RobotController() {}
 
 
 void RobotController::controller_init() {
-    imu_topic_ = node_->declare_parameter<std::string>("imu_topic", "/imu");
-    posture_topic_ = node_->declare_parameter<std::string>("posture_topic", "/pose");
+    imu_topic_ = node_->declare_parameter<std::string>("imu_topic", "/imu_imu_sensor/imu");
+    posture_topic_ = node_->declare_parameter<std::string>("posture_topic", "/base_link_pose_sensor/pose");
     wheel_topic_ = node_->declare_parameter<std::string>("wheel_topic", "/wheels_status");
     target_topic_ = node_->declare_parameter<std::string>("target_topic", "/wheels_target");
     control_period_s_ = node_->declare_parameter<double>("control_period", 0.01);
@@ -57,12 +57,34 @@ void RobotController::update() {
     const auto current_state = build_current_state(dt);
     const auto reference_state = build_reference_state(current_state);
 
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    tf2::Matrix3x3(robot_rotation).getRPY(roll, pitch, yaw);
+
     NmpcSolver::InputVector control = NmpcSolver::InputVector::Zero();
-    if (!solver_.solve(current_state, reference_state, control)) {
-        RCLCPP_WARN_THROTTLE(
-            node_->get_logger(), *node_->get_clock(), 2000, "NMPC solve failed, publishing zero command.");
+    int ret=solver_.solve(current_state, reference_state, control);
+    if (ret!=0) {
+        RCLCPP_WARN(
+            node_->get_logger(), "NMPC solve failed, publishing zero command.err=%d",ret);
         control.setZero();
     }
+    else {
+        RCLCPP_INFO(
+            node_->get_logger(), "NMPC solve succeeded, control: [%f, %f]", control(0), control(1));
+    }
+
+    RCLCPP_INFO_THROTTLE(
+        node_->get_logger(),
+        *node_->get_clock(),
+        500,
+        "balance state pitch=%.4f rad, pitch_rate=%.4f rad/s, wheel_omega=[%.4f, %.4f], torque_cmd=[%.4f, %.4f]",
+        pitch,
+        current_state(15),
+        current_state(17),
+        current_state(18),
+        control(0),
+        control(1));
 
     publish_command(control);
 }
@@ -79,6 +101,15 @@ void RobotController::posture_callback(const geometry_msgs::msg::PoseStamped::Sh
     robot_rotation.setY(robot_posture.pose.orientation.y);
     robot_rotation.setZ(robot_posture.pose.orientation.z);
     robot_rotation.setW(robot_posture.pose.orientation.w);
+    if (robot_rotation.length2() > 1e-12) {
+        robot_rotation.normalize();
+    } else {
+        robot_rotation.setValue(0.0, 0.0, 0.0, 1.0);
+    }
+    robot_posture.pose.orientation.x = robot_rotation.x();
+    robot_posture.pose.orientation.y = robot_rotation.y();
+    robot_posture.pose.orientation.z = robot_rotation.z();
+    robot_posture.pose.orientation.w = robot_rotation.w();
     posture_ready_ = true;
 }
 
@@ -119,6 +150,13 @@ NmpcSolver::StateVector RobotController::build_current_state(double dt) const {
 
 NmpcSolver::StateVector RobotController::build_reference_state(const NmpcSolver::StateVector & current_state) const {
     NmpcSolver::StateVector reference = current_state;
+
+    // Keep the current position and wheel phase, but always regulate the body
+    // back to the upright attitude instead of "freezing" the current lean.
+    reference(3) = 0.0;
+    reference(4) = 0.0;
+    reference(5) = 0.0;
+    reference(6) = 1.0;
 
     reference(11) = 0.0;
     reference(12) = 0.0;

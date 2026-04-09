@@ -71,14 +71,27 @@ bool NmpcSolver::initialize()
   return true;
 }
 
-bool NmpcSolver::solve(
+int NmpcSolver::solve(
   const StateVector & current_state,
   const StateVector & reference_state,
   InputVector & control)
 {
-  if (!initialize()) {
-    return false;
+  // Provide a valid warm start for all shooting nodes before SQP_RTI linearizes
+  // the model. This full-state model contains manifold coordinates
+  // (quaternion + continuous joints encoded in q), so the default all-zero guess
+  // is not a physically valid state and can trigger QP failures.
+  std::array<double, kStateDim> x_guess{};
+  std::copy_n(current_state.data(), kStateDim, x_guess.data());
+
+  std::array<double, kInputDim> u_guess{};
+  std::fill(u_guess.begin(), u_guess.end(), 0.0);
+
+  for (int stage = 0; stage < kHorizon; ++stage) {
+    ocp_nlp_out_set(impl_->nlp_config, impl_->nlp_dims, impl_->nlp_out, impl_->nlp_in, stage, "x", x_guess.data());
+    ocp_nlp_out_set(impl_->nlp_config, impl_->nlp_dims, impl_->nlp_out, impl_->nlp_in, stage, "u", u_guess.data());
   }
+  ocp_nlp_out_set(
+    impl_->nlp_config, impl_->nlp_dims, impl_->nlp_out, impl_->nlp_in, kHorizon, "x", x_guess.data());
 
   std::array<int, kNbx0> idxbx0{};
   for (int i = 0; i < kNbx0; ++i) {
@@ -112,7 +125,7 @@ bool NmpcSolver::solve(
 
   const int status = balance_car_full_state_acados_solve(impl_->capsule);
   if (status != 0) {
-    return false;
+    return status;
   }
 
   std::array<double, kInputDim> u0{};
@@ -121,7 +134,7 @@ bool NmpcSolver::solve(
     control(i) = u0[i];
   }
 
-  return true;
+  return 0;
 }
 
 bool NmpcSolver::is_initialized() const
