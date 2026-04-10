@@ -38,7 +38,43 @@ except ImportError:
 
 
 def _build_motion_weight() -> np.ndarray:
-    return np.diag([40.0, 1500.0, 30.0, 500.0])
+    return np.diag([
+        40.0,    # forward position
+        1500.0,  # pitch
+        30.0,    # forward velocity
+        500.0,   # pitch rate
+        400.0,   # y position residual
+        400.0,   # z position residual
+        600.0,   # roll residual
+        600.0,   # yaw residual
+        80.0,    # y velocity residual
+        80.0,    # z velocity residual
+        120.0,   # roll-rate residual
+        120.0,   # yaw-rate / rolling residual bucket
+        120.0,   # rolling residual
+        120.0,   # wheel sync residual
+    ])
+
+
+def _build_terminal_motion_weight() -> np.ndarray:
+    return np.diag([
+        80.0,    # forward position
+        2500.0,  # pitch
+        60.0,    # forward velocity
+        800.0,   # pitch rate
+        800.0,   # y position residual
+        800.0,   # z position residual
+        1200.0,  # roll residual
+        1200.0,  # yaw residual
+    ])
+
+
+def _build_soft_constraint_reference() -> np.ndarray:
+    return np.zeros(10)
+
+
+def _build_terminal_soft_constraint_reference() -> np.ndarray:
+    return np.zeros(4)
 
 
 def build_ocp(
@@ -51,37 +87,31 @@ def build_ocp(
     ocp = AcadosOcp()
     ocp.model = model
 
-    nh = model.con_h_expr.shape[0]
-    nh_e = model.con_h_expr_e.shape[0]
-
     ocp.solver_options.N_horizon = horizon_steps
     ocp.solver_options.tf = horizon_time
 
     ocp.code_gen_opts.code_export_directory = str(Path(export_directory).resolve())
 
     Q = _build_motion_weight()
+    Q_e = _build_terminal_motion_weight()
     R = np.diag([0.5, 0.5])
     ocp.cost.W = scipy.linalg.block_diag(Q, R)
-    ocp.cost.W_e = 5.0 * Q
+    ocp.cost.W_e = Q_e
 
     ocp.cost.cost_type = "NONLINEAR_LS"
     ocp.cost.cost_type_e = "NONLINEAR_LS"
 
     motion_ref = np.asarray(default_motion_reference(urdf_path)).reshape(-1)
     u_ref = np.asarray(default_input()).reshape(-1)
-    ocp.cost.yref = np.concatenate([motion_ref, u_ref])
-    ocp.cost.yref_e = motion_ref.copy()
+    soft_ref = _build_soft_constraint_reference()
+    soft_ref_e = _build_terminal_soft_constraint_reference()
+    ocp.cost.yref = np.concatenate([motion_ref, soft_ref, u_ref])
+    ocp.cost.yref_e = np.concatenate([motion_ref, soft_ref_e])
 
     ocp.constraints.x0 = np.asarray(default_state(urdf_path)).reshape(-1)
     ocp.constraints.lbu = np.array([-5.0, -5.0])
     ocp.constraints.ubu = np.array([5.0, 5.0])
     ocp.constraints.idxbu = np.array([0, 1], dtype=np.int64)
-    ocp.constraints.lh = np.zeros(nh)
-    ocp.constraints.uh = np.zeros(nh)
-    if nh_e > 0:
-        ocp.constraints.lh_e = np.zeros(nh_e)
-        ocp.constraints.uh_e = np.zeros(nh_e)
-
     ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
     ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
     ocp.solver_options.integrator_type = "ERK"

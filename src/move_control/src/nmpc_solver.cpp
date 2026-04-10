@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 
@@ -73,12 +74,12 @@ bool NmpcSolver::initialize()
 
 int NmpcSolver::solve(
   const StateVector & current_state,
-  const StateVector & reference_state,
+  const ReferenceVector & reference_state,
   InputVector & control)
 {
   // Provide a valid warm start for all shooting nodes before SQP_RTI linearizes
-  // the model. The reduced planar model lives in minimal coordinates, so copying
-  // the measured state is a consistent initialization for every stage.
+  // the model. The constrained full-state model still lives on the Pinocchio
+  // manifold, so we warm start each shooting node with the measured state.
   std::array<double, kStateDim> x_guess{};
   std::copy_n(current_state.data(), kStateDim, x_guess.data());
 
@@ -114,8 +115,8 @@ int NmpcSolver::solve(
   std::fill(yref.begin(), yref.end(), 0.0);
   std::fill(yref_n.begin(), yref_n.end(), 0.0);
 
-  std::copy_n(reference_state.data(), kStateDim, yref.data());
-  std::copy_n(reference_state.data(), kStateDim, yref_n.data());
+  std::copy_n(reference_state.data(), kReferenceDim, yref.data());
+  std::copy_n(reference_state.data(), kReferenceDim, yref_n.data());
 
   for (int stage = 0; stage < kHorizon; ++stage) {
     ocp_nlp_cost_model_set(impl_->nlp_config, impl_->nlp_dims, impl_->nlp_in, stage, "yref", yref.data());
@@ -124,6 +125,11 @@ int NmpcSolver::solve(
 
   const int status = balance_car_full_state_acados_solve(impl_->capsule);
   if (status != 0) {
+    int sqp_iter = 0;
+    int qp_status = 0;
+    ocp_nlp_get(impl_->nlp_solver, "sqp_iter", &sqp_iter);
+    ocp_nlp_get(impl_->nlp_solver, "qp_status", &qp_status);
+    std::fprintf(stderr, "NMPC acados failure: status=%d sqp_iter=%d qp_status=%d\n", status, sqp_iter, qp_status);
     return status;
   }
 

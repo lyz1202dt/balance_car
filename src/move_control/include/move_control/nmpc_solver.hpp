@@ -7,10 +7,12 @@
 class NmpcSolver
 {
 public:
-  static constexpr int kStateDim = 4;
+  static constexpr int kStateDim = 19;
+  static constexpr int kReferenceDim = 4;
   static constexpr int kInputDim = 2;
 
   using StateVector = Eigen::Matrix<double, kStateDim, 1>;
+  using ReferenceVector = Eigen::Matrix<double, kReferenceDim, 1>;
   using InputVector = Eigen::Matrix<double, kInputDim, 1>;
 
   NmpcSolver();
@@ -20,7 +22,7 @@ public:
   NmpcSolver & operator=(const NmpcSolver &) = delete;
 
   bool initialize();
-  int solve(const StateVector & current_state, const StateVector & reference_state, InputVector & control);
+  int solve(const StateVector & current_state, const ReferenceVector & reference_state, InputVector & control);
   bool is_initialized() const;
 
 private:

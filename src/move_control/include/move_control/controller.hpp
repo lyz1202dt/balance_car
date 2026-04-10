@@ -40,7 +40,7 @@ class RobotController
     void posture_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void wheel_state_callback(const robot_interfaces::msg::Wheel::SharedPtr msg);
     NmpcSolver::StateVector build_current_state(double dt) const;
-    NmpcSolver::StateVector build_reference_state(const NmpcSolver::StateVector & current_state) const;
+    NmpcSolver::ReferenceVector build_reference_state(const NmpcSolver::StateVector & current_state) const;
     void publish_command(const NmpcSolver::InputVector & control) const;
 
     rclcpp::Node::SharedPtr node_;
@@ -48,6 +48,9 @@ class RobotController
     bool imu_ready_ = false;
     bool posture_ready_ = false;
     bool wheel_ready_ = false;
+    bool wheel_angle_initialized_ = false;
+    double left_wheel_angle_ = 0.0;
+    double right_wheel_angle_ = 0.0;
     rclcpp::Time last_update_time_{0, 0, RCL_ROS_TIME};
     geometry_msgs::msg::PoseStamped previous_posture_;
 
