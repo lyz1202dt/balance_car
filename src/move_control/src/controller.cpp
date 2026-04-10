@@ -19,6 +19,7 @@ void RobotController::controller_init() {
     target_topic_ = node_->declare_parameter<std::string>("target_topic", "/wheels_target");
     control_period_s_ = node_->declare_parameter<double>("control_period", 0.01);
     command_limit_ = node_->declare_parameter<double>("command_limit", 5.0);
+    wheel_radius_ = node_->declare_parameter<double>("wheel_radius", 0.05);
 
     imu_state_sub = node_->create_subscription<sensor_msgs::msg::Imu>(
         imu_topic_, 10, [this](const sensor_msgs::msg::Imu::SharedPtr msg) { imu_callback(msg); });
@@ -47,20 +48,8 @@ void RobotController::update() {
     }
     last_update_time_ = now;
 
-    if (!wheel_angle_initialized_) {
-        wheel_angle_initialized_ = true;
-    } else {
-        left_wheel_angle_ += static_cast<double>(wheel_state.left_omega) * dt;
-        right_wheel_angle_ += static_cast<double>(wheel_state.right_omega) * dt;
-    }
-
     const auto current_state = build_current_state(dt);
     const auto reference_state = build_reference_state(current_state);
-
-    double roll = 0.0;
-    double pitch = 0.0;
-    double yaw = 0.0;
-    tf2::Matrix3x3(robot_rotation).getRPY(roll, pitch, yaw);
 
     NmpcSolver::InputVector control = NmpcSolver::InputVector::Zero();
     int ret=solver_.solve(current_state, reference_state, control);
@@ -78,11 +67,11 @@ void RobotController::update() {
         node_->get_logger(),
         *node_->get_clock(),
         500,
-        "balance state pitch=%.4f rad, pitch_rate=%.4f rad/s, wheel_omega=[%.4f, %.4f], torque_cmd=[%.4f, %.4f]",
-        pitch,
-        current_state(15),
-        current_state(17),
-        current_state(18),
+        "balance state position=%.4f m, pitch=%.4f rad, velocity=%.4f m/s, pitch_rate=%.4f rad/s, torque_cmd=[%.4f, %.4f]",
+        current_state(0),
+        current_state(1),
+        current_state(2),
+        current_state(3),
         control(0),
         control(1));
 
@@ -119,31 +108,24 @@ void RobotController::wheel_state_callback(const robot_interfaces::msg::Wheel::S
 }
 
 NmpcSolver::StateVector RobotController::build_current_state(double dt) const {
+    static_cast<void>(dt);
     NmpcSolver::StateVector state = NmpcSolver::StateVector::Zero();
 
+    double roll = 0.0;
+    double pitch = 0.0;
+    double yaw = 0.0;
+    tf2::Matrix3x3(robot_rotation).getRPY(roll, pitch, yaw);
+    static_cast<void>(roll);
+    static_cast<void>(yaw);
+
+    const double wheel_forward_velocity =
+        0.5 * (static_cast<double>(wheel_state.left_omega) + static_cast<double>(wheel_state.right_omega)) *
+        wheel_radius_;
+
     state(0) = robot_posture.pose.position.x;
-    state(1) = robot_posture.pose.position.y;
-    state(2) = robot_posture.pose.position.z;
-    state(3) = robot_posture.pose.orientation.x;
-    state(4) = robot_posture.pose.orientation.y;
-    state(5) = robot_posture.pose.orientation.z;
-    state(6) = robot_posture.pose.orientation.w;
-    state(7) = std::cos(left_wheel_angle_);
-    state(8) = std::sin(left_wheel_angle_);
-    state(9) = std::cos(right_wheel_angle_);
-    state(10) = std::sin(right_wheel_angle_);
-
-    if (dt > 0.0 && (previous_posture_.header.stamp.sec != 0 || previous_posture_.header.stamp.nanosec != 0)) {
-        state(11) = (robot_posture.pose.position.x - previous_posture_.pose.position.x) / dt;
-        state(12) = (robot_posture.pose.position.y - previous_posture_.pose.position.y) / dt;
-        state(13) = (robot_posture.pose.position.z - previous_posture_.pose.position.z) / dt;
-    }
-
-    state(14) = robot_imu.angular_velocity.x;
-    state(15) = robot_imu.angular_velocity.y;
-    state(16) = robot_imu.angular_velocity.z;
-    state(17) = wheel_state.left_omega;
-    state(18) = wheel_state.right_omega;
+    state(1) = pitch;
+    state(2) = wheel_forward_velocity;
+    state(3) = robot_imu.angular_velocity.y;
 
     return state;
 }
@@ -151,21 +133,11 @@ NmpcSolver::StateVector RobotController::build_current_state(double dt) const {
 NmpcSolver::StateVector RobotController::build_reference_state(const NmpcSolver::StateVector & current_state) const {
     NmpcSolver::StateVector reference = current_state;
 
-    // Keep the current position and wheel phase, but always regulate the body
-    // back to the upright attitude instead of "freezing" the current lean.
+    // Hold the current longitudinal position while regulating back to the
+    // upright, zero-velocity equilibrium of the planar balance model.
+    reference(1) = 0.0;
+    reference(2) = 0.0;
     reference(3) = 0.0;
-    reference(4) = 0.0;
-    reference(5) = 0.0;
-    reference(6) = 1.0;
-
-    reference(11) = 0.0;
-    reference(12) = 0.0;
-    reference(13) = 0.0;
-    reference(14) = 0.0;
-    reference(15) = 0.0;
-    reference(16) = 0.0;
-    reference(17) = 0.0;
-    reference(18) = 0.0;
 
     return reference;
 }

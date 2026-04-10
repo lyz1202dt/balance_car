@@ -48,9 +48,6 @@ class RobotController
     bool imu_ready_ = false;
     bool posture_ready_ = false;
     bool wheel_ready_ = false;
-    bool wheel_angle_initialized_ = false;
-    double left_wheel_angle_ = 0.0;
-    double right_wheel_angle_ = 0.0;
     rclcpp::Time last_update_time_{0, 0, RCL_ROS_TIME};
     geometry_msgs::msg::PoseStamped previous_posture_;
 
@@ -83,4 +80,5 @@ class RobotController
     std::string target_topic_;
     double control_period_s_ = 0.01;
     double command_limit_ = 5.0;
+    double wheel_radius_ = 0.05;
 };

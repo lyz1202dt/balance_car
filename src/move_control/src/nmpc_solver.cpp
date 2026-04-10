@@ -77,9 +77,8 @@ int NmpcSolver::solve(
   InputVector & control)
 {
   // Provide a valid warm start for all shooting nodes before SQP_RTI linearizes
-  // the model. This full-state model contains manifold coordinates
-  // (quaternion + continuous joints encoded in q), so the default all-zero guess
-  // is not a physically valid state and can trigger QP failures.
+  // the model. The reduced planar model lives in minimal coordinates, so copying
+  // the measured state is a consistent initialization for every stage.
   std::array<double, kStateDim> x_guess{};
   std::copy_n(current_state.data(), kStateDim, x_guess.data());
 

@@ -42,6 +42,27 @@ set(NMPC_GENERATED_MODEL_HEADER ${NMPC_GENERATED_DIR}/balance_car_full_state_mod
 set(NMPC_GENERATED_MODEL_ODE ${NMPC_GENERATED_DIR}/balance_car_full_state_model/balance_car_full_state_expl_ode_fun.c)
 set(NMPC_GENERATED_MODEL_VDE_FORW ${NMPC_GENERATED_DIR}/balance_car_full_state_model/balance_car_full_state_expl_vde_forw.c)
 set(NMPC_GENERATED_MODEL_VDE_ADJ ${NMPC_GENERATED_DIR}/balance_car_full_state_model/balance_car_full_state_expl_vde_adj.c)
+set(NMPC_GENERATED_COST_DIR ${NMPC_GENERATED_DIR}/balance_car_full_state_cost)
+set(NMPC_GENERATED_CONSTRAINT_DIR ${NMPC_GENERATED_DIR}/balance_car_full_state_constraints)
+set(NMPC_GENERATED_COST_HEADER ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost.h)
+set(NMPC_GENERATED_CONSTRAINT_HEADER ${NMPC_GENERATED_CONSTRAINT_DIR}/balance_car_full_state_constraints.h)
+set(NMPC_GENERATED_COST_SOURCES
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_0_fun.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_0_fun_jac_ut_xt.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_0_hess.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_fun.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_fun_jac_ut_xt.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_hess.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_e_fun.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_e_fun_jac_ut_xt.c
+  ${NMPC_GENERATED_COST_DIR}/balance_car_full_state_cost_y_e_hess.c
+)
+set(NMPC_GENERATED_CONSTRAINT_SOURCES
+  ${NMPC_GENERATED_CONSTRAINT_DIR}/balance_car_full_state_constr_h_fun.c
+  ${NMPC_GENERATED_CONSTRAINT_DIR}/balance_car_full_state_constr_h_fun_jac_uxt_zt.c
+  ${NMPC_GENERATED_CONSTRAINT_DIR}/balance_car_full_state_constr_h_e_fun.c
+  ${NMPC_GENERATED_CONSTRAINT_DIR}/balance_car_full_state_constr_h_e_fun_jac_uxt_zt.c
+)
 
 add_custom_command(
   OUTPUT
@@ -52,6 +73,10 @@ add_custom_command(
     ${NMPC_GENERATED_MODEL_ODE}
     ${NMPC_GENERATED_MODEL_VDE_FORW}
     ${NMPC_GENERATED_MODEL_VDE_ADJ}
+    ${NMPC_GENERATED_COST_HEADER}
+    ${NMPC_GENERATED_CONSTRAINT_HEADER}
+    ${NMPC_GENERATED_COST_SOURCES}
+    ${NMPC_GENERATED_CONSTRAINT_SOURCES}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${NMPC_GENERATED_DIR}
   COMMAND ${CMAKE_COMMAND} -E env
     ACADOS_SOURCE_DIR=${ACADOS_ROOT}
@@ -79,6 +104,8 @@ ${NMPC_GENERATED_MAIN_SOURCE}
 ${NMPC_GENERATED_MODEL_ODE}
 ${NMPC_GENERATED_MODEL_VDE_FORW}
 ${NMPC_GENERATED_MODEL_VDE_ADJ}
+${NMPC_GENERATED_COST_SOURCES}
+${NMPC_GENERATED_CONSTRAINT_SOURCES}
 )
 
 add_dependencies(move_control generate_balance_car_nmpc)
@@ -93,6 +120,8 @@ target_include_directories(move_control
     ${ACADOS_ROOT}/include/hpipm/include
     ${NMPC_GENERATED_DIR}
     ${NMPC_GENERATED_DIR}/balance_car_full_state_model
+    ${NMPC_GENERATED_COST_DIR}
+    ${NMPC_GENERATED_CONSTRAINT_DIR}
     /opt/openrobots/include
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
