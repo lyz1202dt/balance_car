@@ -43,16 +43,6 @@ def _build_motion_weight() -> np.ndarray:
         1500.0,  # pitch
         30.0,    # forward velocity
         500.0,   # pitch rate
-        400.0,   # y position residual
-        400.0,   # z position residual
-        600.0,   # roll residual
-        600.0,   # yaw residual
-        80.0,    # y velocity residual
-        80.0,    # z velocity residual
-        120.0,   # roll-rate residual
-        120.0,   # yaw-rate / rolling residual bucket
-        120.0,   # rolling residual
-        120.0,   # wheel sync residual
     ])
 
 
@@ -62,19 +52,7 @@ def _build_terminal_motion_weight() -> np.ndarray:
         2500.0,  # pitch
         60.0,    # forward velocity
         800.0,   # pitch rate
-        800.0,   # y position residual
-        800.0,   # z position residual
-        1200.0,  # roll residual
-        1200.0,  # yaw residual
     ])
-
-
-def _build_soft_constraint_reference() -> np.ndarray:
-    return np.zeros(10)
-
-
-def _build_terminal_soft_constraint_reference() -> np.ndarray:
-    return np.zeros(4)
 
 
 def build_ocp(
@@ -103,10 +81,8 @@ def build_ocp(
 
     motion_ref = np.asarray(default_motion_reference(urdf_path)).reshape(-1)
     u_ref = np.asarray(default_input()).reshape(-1)
-    soft_ref = _build_soft_constraint_reference()
-    soft_ref_e = _build_terminal_soft_constraint_reference()
-    ocp.cost.yref = np.concatenate([motion_ref, soft_ref, u_ref])
-    ocp.cost.yref_e = np.concatenate([motion_ref, soft_ref_e])
+    ocp.cost.yref = np.concatenate([motion_ref, u_ref])
+    ocp.cost.yref_e = motion_ref
 
     ocp.constraints.x0 = np.asarray(default_state(urdf_path)).reshape(-1)
     ocp.constraints.lbu = np.array([-5.0, -5.0])

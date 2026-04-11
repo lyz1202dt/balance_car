@@ -7,7 +7,7 @@
 class NmpcSolver
 {
 public:
-  static constexpr int kStateDim = 19;
+  static constexpr int kStateDim = 4;
   static constexpr int kReferenceDim = 4;
   static constexpr int kInputDim = 2;
 
