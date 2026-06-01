@@ -1,88 +1,145 @@
 #include <controller/mujoco_sim.hpp>
 
-#include <utility>
+#include <algorithm>
+#include <cmath>
 
 #include <pluginlib/class_list_macros.hpp>
 
 namespace car_controller {
 
-hardware_interface::CallbackReturn MujocoSimSystem::on_init(const hardware_interface::HardwareInfo& system_info) {
-    const auto result = mujoco_ros2_control::MujocoSystem::on_init(system_info);
-    if (result != hardware_interface::CallbackReturn::SUCCESS) {
-        return result;
-    }
+namespace {
 
-    const auto imu_name_it = system_info.hardware_parameters.find("imu_sensor_name");
-    if (imu_name_it != system_info.hardware_parameters.end()) {
-        imu_sensor_name_ = imu_name_it->second;
-    }
+constexpr size_t kMotorCount = 6;
+constexpr size_t kTargetInterfacesPerMotor = 5;
+constexpr const char* kReferencePrefix = "mujoco_sim_controller";
 
-    const auto imu_topic_it = system_info.hardware_parameters.find("imu_topic");
-    if (imu_topic_it != system_info.hardware_parameters.end()) {
-        imu_topic_ = imu_topic_it->second;
-    }
-
-    imu_state_.fill(0.0);
-    imu_state_[3] = 1.0;
-
-    imu_node_ = rclcpp::Node::make_shared(
-        "mujoco_sim_interface", rclcpp::NodeOptions().parameter_overrides({{"use_sim_time", true}}));
-    imu_subscriber_ = imu_node_->create_subscription<sensor_msgs::msg::Imu>(
-        imu_topic_, rclcpp::SensorDataQoS(),
-        [this](sensor_msgs::msg::Imu::SharedPtr msg) { imu_callback(std::move(msg)); });
-    imu_executor_.add_node(imu_node_);
-
-    RCLCPP_INFO(
-        imu_node_->get_logger(), "Subscribing MuJoCo IMU topic '%s' as ros2_control sensor '%s'",
-        imu_topic_.c_str(), imu_sensor_name_.c_str());
-    return hardware_interface::CallbackReturn::SUCCESS;
+size_t target_index(const size_t motor_index, const size_t interface_index) {
+    return motor_index * kTargetInterfacesPerMotor + interface_index;
 }
 
-std::vector<hardware_interface::StateInterface> MujocoSimSystem::export_state_interfaces() {
-    auto interfaces = mujoco_ros2_control::MujocoSystem::export_state_interfaces();
+}  // namespace
 
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "orientation.x", &imu_state_[0]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "orientation.y", &imu_state_[1]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "orientation.z", &imu_state_[2]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "orientation.w", &imu_state_[3]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.x", &imu_state_[4]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.y", &imu_state_[5]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.z", &imu_state_[6]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.x", &imu_state_[7]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.y", &imu_state_[8]);
-    imu_state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.z", &imu_state_[9]);
+MujocoSimController::MujocoSimController() = default;
 
-    interfaces.reserve(interfaces.size() + imu_state_interfaces_.size());
-    for (auto& interface : imu_state_interfaces_) {
-        interfaces.emplace_back(std::move(interface));
+controller_interface::CallbackReturn MujocoSimController::on_init() {
+    motor_joint_names_ = {
+        "left_front_hip_joint",
+        "left_rear_hip_joint",
+        "left_wheel_joint",
+        "right_front_hip_joint",
+        "right_rear_hip_joint",
+        "right_wheel_joint",
+    };
+
+    get_node()->declare_parameter("effort_limit", effort_limit_);
+
+    return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn MujocoSimController::on_configure(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
+
+    effort_limit_ = get_node()->get_parameter("effort_limit").as_double();
+
+    reference_interfaces_.assign(kMotorCount * kTargetInterfacesPerMotor, 0.0);
+
+    RCLCPP_INFO(
+        get_node()->get_logger(), "MuJoCo sim middle controller exports motor targets under '%s'",
+        kReferencePrefix);
+    return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn MujocoSimController::on_activate(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
+    return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::CallbackReturn MujocoSimController::on_deactivate(const rclcpp_lifecycle::State& previous_state) {
+    (void)previous_state;
+    return controller_interface::CallbackReturn::SUCCESS;
+}
+
+controller_interface::InterfaceConfiguration MujocoSimController::command_interface_configuration() const {
+    controller_interface::InterfaceConfiguration cfg;
+    cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
+
+    for (const auto& name : motor_joint_names_) {
+        cfg.names.push_back(name + "/effort");
+    }
+    return cfg;
+}
+
+controller_interface::InterfaceConfiguration MujocoSimController::state_interface_configuration() const {
+    controller_interface::InterfaceConfiguration cfg;
+    cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
+
+    for (const auto& name : motor_joint_names_) {
+        cfg.names.push_back(name + "/position");
+        cfg.names.push_back(name + "/velocity");
+        cfg.names.push_back(name + "/effort");
+    }
+    return cfg;
+}
+
+std::vector<hardware_interface::CommandInterface> MujocoSimController::on_export_reference_interfaces() {
+    std::vector<hardware_interface::CommandInterface> interfaces;
+    interfaces.reserve(reference_interfaces_.size());
+
+    for (size_t i = 0; i < kMotorCount; ++i) {
+        const auto prefix = std::string(kReferencePrefix) + "/" + motor_joint_names_[i];
+        interfaces.emplace_back(prefix, "position", &reference_interfaces_[target_index(i, 0)]);
+        interfaces.emplace_back(prefix, "velocity", &reference_interfaces_[target_index(i, 1)]);
+        interfaces.emplace_back(prefix, "effort", &reference_interfaces_[target_index(i, 2)]);
+        interfaces.emplace_back(prefix, "kp", &reference_interfaces_[target_index(i, 3)]);
+        interfaces.emplace_back(prefix, "kd", &reference_interfaces_[target_index(i, 4)]);
     }
     return interfaces;
 }
 
-hardware_interface::return_type MujocoSimSystem::read(const rclcpp::Time& time, const rclcpp::Duration& period) {
-    spin_imu_subscription();
-    return mujoco_ros2_control::MujocoSystem::read(time, period);
+controller_interface::return_type MujocoSimController::update_reference_from_subscribers() {
+    return controller_interface::return_type::OK;
 }
 
-void MujocoSimSystem::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-    imu_state_[0] = msg->orientation.x;
-    imu_state_[1] = msg->orientation.y;
-    imu_state_[2] = msg->orientation.z;
-    imu_state_[3] = msg->orientation.w;
-    imu_state_[4] = msg->angular_velocity.x;
-    imu_state_[5] = msg->angular_velocity.y;
-    imu_state_[6] = msg->angular_velocity.z;
-    imu_state_[7] = msg->linear_acceleration.x;
-    imu_state_[8] = msg->linear_acceleration.y;
-    imu_state_[9] = msg->linear_acceleration.z;
-}
+controller_interface::return_type MujocoSimController::update_and_write_commands(
+    const rclcpp::Time& time, const rclcpp::Duration& period) {
+    (void)time;
+    (void)period;
 
-void MujocoSimSystem::spin_imu_subscription() {
-    if (imu_node_) {
-        imu_executor_.spin_some();
+    read_joint_states();
+
+    for (size_t i = 0; i < kMotorCount; ++i) {
+        motor_reference_[i].position = reference_interfaces_[target_index(i, 0)];
+        motor_reference_[i].velocity = reference_interfaces_[target_index(i, 1)];
+        motor_reference_[i].effort = reference_interfaces_[target_index(i, 2)];
+        motor_reference_[i].kp = reference_interfaces_[target_index(i, 3)];
+        motor_reference_[i].kd = reference_interfaces_[target_index(i, 4)];
+
+        const double position_error = motor_reference_[i].position - motor_state_[i].position;
+        const double velocity_error = motor_reference_[i].velocity - motor_state_[i].velocity;
+        const double effort =
+            motor_reference_[i].kp * position_error + motor_reference_[i].kd * velocity_error + motor_reference_[i].effort;
+        command_interfaces_[i].set_value(clamp_effort(effort));
     }
+
+    return controller_interface::return_type::OK;
+}
+
+void MujocoSimController::read_joint_states() {
+    for (size_t motor_index = 0; motor_index < kMotorCount; ++motor_index) {
+        const size_t state_index = motor_index * kStateInterfacesPerMotor;
+        motor_state_[motor_index].position = state_interfaces_[state_index].get_value();
+        motor_state_[motor_index].velocity = state_interfaces_[state_index + 1].get_value();
+        motor_state_[motor_index].effort = state_interfaces_[state_index + 2].get_value();
+    }
+}
+
+double MujocoSimController::clamp_effort(const double effort) const {
+    if (!std::isfinite(effort)) {
+        return 0.0;
+    }
+    return std::clamp(effort, -effort_limit_, effort_limit_);
 }
 
 }  // namespace car_controller
 
-PLUGINLIB_EXPORT_CLASS(car_controller::MujocoSimSystem, mujoco_ros2_control::MujocoSystemInterface)
+PLUGINLIB_EXPORT_CLASS(car_controller::MujocoSimController, controller_interface::ChainableControllerInterface)

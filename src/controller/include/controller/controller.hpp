@@ -5,7 +5,6 @@
 #include <vector>
 
 #include <controller_interface/controller_interface.hpp>
-#include <controller_interface/semantic_components/imu_sensor.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -13,6 +12,7 @@
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
 #include <robot_interfaces/msg/robot_state.hpp>
 #include <robot_interfaces/msg/robot_target.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 
 namespace car_controller {
 
@@ -49,27 +49,31 @@ private:
     void read_state_interfaces();
     void update_motor_commands(const rclcpp::Duration& period);
     void publish_robot_state();
+    bool load_default_pd_gains();
+    void imu_callback(const sensor_msgs::msg::Imu& msg);
     double clamp_torque(double value) const;
+    bool use_mujoco_sim_chain() const;
+    bool use_sim_time_parameter() const;
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr robot_exp_vel;
     rclcpp::Subscription<robot_interfaces::msg::RobotTarget>::SharedPtr target_subscriber_;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscriber_;
     rclcpp_lifecycle::LifecyclePublisher<robot_interfaces::msg::RobotState>::SharedPtr state_publisher_;
     rclcpp_lifecycle::LifecycleNode::OnSetParametersCallbackHandle::SharedPtr param_cb_;
 
     std::array<std::string, kMotorCount> motor_joint_names_{};
     std::array<MotorSample, kMotorCount> motor_state_{};
 
-    std::unique_ptr<semantic_components::IMUSensor> imu_sensor_;
     ImuSample imu_state_;
     robot_interfaces::msg::RobotState robot_state_;
     robot_interfaces::msg::RobotTarget robot_target_;
     geometry_msgs::msg::Twist expected_velocity_;
 
     double torque_limit_{20.0};
-    std::string imu_sensor_name_{"imu"};
-    std::string state_topic_{"robot_state"};
-    std::string target_topic_{"robot_target"};
-    std::string cmd_vel_topic_{"cmd_vel"};
+    std::array<double, kMotorCount> default_kp_{};
+    std::array<double, kMotorCount> default_kd_{};
+    std::string imu_topic_{"/imu_imu_sensor/imu"};
+    bool use_mujoco_sim_chain_{false};
 };
 
 }  // namespace car_controller

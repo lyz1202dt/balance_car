@@ -21,7 +21,6 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(robot_interfaces REQUIRED)
-find_package(mujoco_ros2_control REQUIRED)
 find_package(urdf REQUIRED)
 
 if(BUILD_TESTING)
@@ -38,7 +37,6 @@ endif()
 
 pluginlib_export_plugin_description_file(controller_interface plugin.xml)
 pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
-pluginlib_export_plugin_description_file(mujoco_ros2_control plugin.xml)
 
 add_library(car_controller SHARED
   src/controller.cpp
@@ -61,7 +59,6 @@ ament_target_dependencies(
   geometry_msgs
   sensor_msgs
   robot_interfaces
-  mujoco_ros2_control
   urdf
 )
 
@@ -77,7 +74,7 @@ install(DIRECTORY include/
 DESTINATION include)
 
 install(
-  DIRECTORY config launch
+  DIRECTORY config launch urdf
   DESTINATION share/${PROJECT_NAME}
 )
 

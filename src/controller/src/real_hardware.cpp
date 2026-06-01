@@ -9,19 +9,12 @@ hardware_interface::CallbackReturn RealHardware::on_init(const hardware_interfac
         return hardware_interface::CallbackReturn::ERROR;
     }
 
-    const auto imu_name_it = info.hardware_parameters.find("imu_sensor_name");
-    if (imu_name_it != info.hardware_parameters.end()) {
-        imu_sensor_name_ = imu_name_it->second;
-    }
-
     joints_.clear();
     joints_.reserve(info.joints.size());
     for (const auto& joint_info : info.joints) {
         joints_.push_back(JointData{joint_info.name});
     }
 
-    imu_state_.fill(0.0);
-    imu_state_[3] = 1.0;
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -33,23 +26,17 @@ std::vector<hardware_interface::StateInterface> RealHardware::export_state_inter
         state_interfaces_.emplace_back(joint.name, "effort", &joint.effort);
     }
 
-    state_interfaces_.emplace_back(imu_sensor_name_, "orientation.x", &imu_state_[0]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "orientation.y", &imu_state_[1]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "orientation.z", &imu_state_[2]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "orientation.w", &imu_state_[3]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.x", &imu_state_[4]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.y", &imu_state_[5]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "angular_velocity.z", &imu_state_[6]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.x", &imu_state_[7]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.y", &imu_state_[8]);
-    state_interfaces_.emplace_back(imu_sensor_name_, "linear_acceleration.z", &imu_state_[9]);
     return std::move(state_interfaces_);
 }
 
 std::vector<hardware_interface::CommandInterface> RealHardware::export_command_interfaces() {
     command_interfaces_.clear();
     for (auto& joint : joints_) {
+        command_interfaces_.emplace_back(joint.name, "position", &joint.position_command);
+        command_interfaces_.emplace_back(joint.name, "velocity", &joint.velocity_command);
         command_interfaces_.emplace_back(joint.name, "effort", &joint.effort_command);
+        command_interfaces_.emplace_back(joint.name, "kp", &joint.kp_command);
+        command_interfaces_.emplace_back(joint.name, "kd", &joint.kd_command);
     }
     return std::move(command_interfaces_);
 }
@@ -68,7 +55,7 @@ hardware_interface::return_type RealHardware::read(const rclcpp::Time& time, con
     (void)time;
     (void)period;
 
-    // TODO(real hardware): Read motor encoders/velocity/torque and IMU, then fill joints_ and imu_state_.
+    // TODO(real hardware): Read motor encoders/velocity/torque, then fill joints_.
     return hardware_interface::return_type::OK;
 }
 
@@ -76,7 +63,7 @@ hardware_interface::return_type RealHardware::write(const rclcpp::Time& time, co
     (void)time;
     (void)period;
 
-    // TODO(real hardware): Send joints_[i].effort_command to the physical motor drivers.
+    // TODO(real hardware): Send position/velocity/effort/kp/kd commands to the physical motor drivers.
     return hardware_interface::return_type::OK;
 }
 

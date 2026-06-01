@@ -13,6 +13,17 @@ namespace car_controller {
 
 namespace {
 
+constexpr size_t kMotorCount = 6;
+constexpr size_t kTargetInterfacesPerMotor = 5;
+constexpr const char* kReferencePrefix = "mujoco_sim_controller";
+constexpr const char* kStateTopic = "robot_state";
+constexpr const char* kTargetTopic = "robot_target";
+constexpr const char* kCmdVelTopic = "cmd_vel";
+
+size_t motor_target_index(const size_t motor_index, const size_t interface_index) {
+    return motor_index * kTargetInterfacesPerMotor + interface_index;
+}
+
 robot_interfaces::msg::MotorState& motor_state_at(robot_interfaces::msg::RobotState& msg, const size_t index) {
     switch (index) {
         case 0:
@@ -62,12 +73,10 @@ controller_interface::CallbackReturn CarController::on_init() {
     };
 
     auto node = get_node();
-    node->declare_parameter("joints", std::vector<std::string>(motor_joint_names_.begin(), motor_joint_names_.end()));
-    node->declare_parameter("imu_sensor_name", imu_sensor_name_);
+    node->declare_parameter("imu_topic", imu_topic_);
     node->declare_parameter("torque_limit", torque_limit_);
-    node->declare_parameter("state_topic", state_topic_);
-    node->declare_parameter("target_topic", target_topic_);
-    node->declare_parameter("cmd_vel_topic", cmd_vel_topic_);
+    node->declare_parameter("default_kp", std::vector<double>(kMotorCount, 0.0));
+    node->declare_parameter("default_kd", std::vector<double>(kMotorCount, 0.0));
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
@@ -86,34 +95,28 @@ controller_interface::CallbackReturn CarController::on_init() {
 controller_interface::CallbackReturn CarController::on_configure(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
 
-    const auto joint_names = get_node()->get_parameter("joints").as_string_array();
-    if (joint_names.size() != kMotorCount) {
-        RCLCPP_ERROR(
-            get_node()->get_logger(), "Expected %zu controlled joints, got %zu", kMotorCount, joint_names.size());
+    imu_topic_ = get_node()->get_parameter("imu_topic").as_string();
+    use_mujoco_sim_chain_ = use_sim_time_parameter();
+    torque_limit_ = get_node()->get_parameter("torque_limit").as_double();
+    if (!load_default_pd_gains()) {
         return controller_interface::CallbackReturn::ERROR;
     }
-    std::copy(joint_names.begin(), joint_names.end(), motor_joint_names_.begin());
 
-    imu_sensor_name_ = get_node()->get_parameter("imu_sensor_name").as_string();
-    torque_limit_ = get_node()->get_parameter("torque_limit").as_double();
-    state_topic_ = get_node()->get_parameter("state_topic").as_string();
-    target_topic_ = get_node()->get_parameter("target_topic").as_string();
-    cmd_vel_topic_ = get_node()->get_parameter("cmd_vel_topic").as_string();
-    imu_sensor_ = std::make_unique<semantic_components::IMUSensor>(imu_sensor_name_);
-
-    state_publisher_ = get_node()->create_publisher<robot_interfaces::msg::RobotState>(state_topic_, 10);
+    state_publisher_ = get_node()->create_publisher<robot_interfaces::msg::RobotState>(kStateTopic, 10);
     target_subscriber_ = get_node()->create_subscription<robot_interfaces::msg::RobotTarget>(
-        target_topic_, 10, [this](const robot_interfaces::msg::RobotTarget& msg) { robot_target_ = msg; });
+        kTargetTopic, 10, [this](const robot_interfaces::msg::RobotTarget& msg) { robot_target_ = msg; });
     robot_exp_vel = get_node()->create_subscription<geometry_msgs::msg::Twist>(
-        cmd_vel_topic_, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
+        kCmdVelTopic, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
+    imu_subscriber_ = get_node()->create_subscription<sensor_msgs::msg::Imu>(
+        imu_topic_, rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Imu& msg) { imu_callback(msg); });
 
     for (size_t i = 0; i < kMotorCount; ++i) {
         auto& target = target_at(robot_target_, i);
         target.rad = 0.0F;
         target.omega = 0.0F;
         target.torque = 0.0F;
-        target.kp = 0.0F;
-        target.kd = 0.0F;
+        target.kp = static_cast<float>(default_kp_[i]);
+        target.kd = static_cast<float>(default_kd_[i]);
     }
 
     return controller_interface::CallbackReturn::SUCCESS;
@@ -121,11 +124,6 @@ controller_interface::CallbackReturn CarController::on_configure(const rclcpp_li
 
 controller_interface::CallbackReturn CarController::on_activate(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
-
-    if (imu_sensor_ && !imu_sensor_->assign_loaned_state_interfaces(state_interfaces_)) {
-        RCLCPP_ERROR(get_node()->get_logger(), "Failed to assign IMU state interfaces for '%s'", imu_sensor_name_.c_str());
-        return controller_interface::CallbackReturn::ERROR;
-    }
 
     if (state_publisher_) {
         state_publisher_->on_activate();
@@ -138,9 +136,6 @@ controller_interface::CallbackReturn CarController::on_deactivate(const rclcpp_l
 
     if (state_publisher_) {
         state_publisher_->on_deactivate();
-    }
-    if (imu_sensor_) {
-        imu_sensor_->release_interfaces();
     }
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -160,22 +155,21 @@ void CarController::read_state_interfaces() {
         motor_state_[motor_index].velocity = state_interfaces_[state_index + 1].get_value();
         motor_state_[motor_index].effort = state_interfaces_[state_index + 2].get_value();
     }
-
-    if (imu_sensor_) {
-        imu_state_.orientation = imu_sensor_->get_orientation();
-        imu_state_.angular_velocity = imu_sensor_->get_angular_velocity();
-        imu_state_.linear_acceleration = imu_sensor_->get_linear_acceleration();
-    }
 }
 
 void CarController::update_motor_commands(const rclcpp::Duration& period) {
     (void)period;
 
     // TODO(LQR-VMC): Replace this passthrough with the balance controller.
-    // Inputs are motor_state_, imu_state_ and expected_velocity_; outputs are the six effort commands.
+    // Inputs are motor_state_, imu_state_ and expected_velocity_; outputs are the six motor targets.
     for (size_t i = 0; i < kMotorCount; ++i) {
         const auto& target = target_at(robot_target_, i);
-        command_interfaces_[i].set_value(clamp_torque(static_cast<double>(target.torque)));
+        const size_t command_index = motor_target_index(i, 0);
+        command_interfaces_[command_index].set_value(static_cast<double>(target.rad));
+        command_interfaces_[command_index + 1].set_value(static_cast<double>(target.omega));
+        command_interfaces_[command_index + 2].set_value(clamp_torque(static_cast<double>(target.torque)));
+        command_interfaces_[command_index + 3].set_value(static_cast<double>(target.kp));
+        command_interfaces_[command_index + 4].set_value(static_cast<double>(target.kd));
     }
 }
 
@@ -193,6 +187,40 @@ void CarController::publish_robot_state() {
     state_publisher_->publish(robot_state_);
 }
 
+bool CarController::load_default_pd_gains() {
+    const auto kp_values = get_node()->get_parameter("default_kp").as_double_array();
+    const auto kd_values = get_node()->get_parameter("default_kd").as_double_array();
+    if (kp_values.size() != kMotorCount || kd_values.size() != kMotorCount) {
+        RCLCPP_ERROR(
+            get_node()->get_logger(), "Expected %zu default_kp and default_kd values, got %zu and %zu", kMotorCount,
+            kp_values.size(), kd_values.size());
+        return false;
+    }
+
+    std::copy(kp_values.begin(), kp_values.end(), default_kp_.begin());
+    std::copy(kd_values.begin(), kd_values.end(), default_kd_.begin());
+    return true;
+}
+
+void CarController::imu_callback(const sensor_msgs::msg::Imu& msg) {
+    imu_state_.orientation = {
+        msg.orientation.x,
+        msg.orientation.y,
+        msg.orientation.z,
+        msg.orientation.w,
+    };
+    imu_state_.angular_velocity = {
+        msg.angular_velocity.x,
+        msg.angular_velocity.y,
+        msg.angular_velocity.z,
+    };
+    imu_state_.linear_acceleration = {
+        msg.linear_acceleration.x,
+        msg.linear_acceleration.y,
+        msg.linear_acceleration.z,
+    };
+}
+
 double CarController::clamp_torque(const double value) const {
     if (!std::isfinite(value)) {
         return 0.0;
@@ -200,12 +228,37 @@ double CarController::clamp_torque(const double value) const {
     return std::clamp(value, -torque_limit_, torque_limit_);
 }
 
+bool CarController::use_mujoco_sim_chain() const {
+    return use_mujoco_sim_chain_;
+}
+
+bool CarController::use_sim_time_parameter() const {
+    rclcpp::Parameter use_sim_time;
+    if (get_node()->get_parameter("use_sim_time", use_sim_time)) {
+        return use_sim_time.as_bool();
+    }
+    return false;
+}
+
 controller_interface::InterfaceConfiguration CarController::command_interface_configuration() const {
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
     for (const auto& name : motor_joint_names_) {
-        cfg.names.push_back(name + "/effort");
+        if (use_sim_time_parameter()) {
+            const auto prefix = std::string(kReferencePrefix) + "/" + name;
+            cfg.names.push_back(prefix + "/position");
+            cfg.names.push_back(prefix + "/velocity");
+            cfg.names.push_back(prefix + "/effort");
+            cfg.names.push_back(prefix + "/kp");
+            cfg.names.push_back(prefix + "/kd");
+        } else {
+            cfg.names.push_back(name + "/position");
+            cfg.names.push_back(name + "/velocity");
+            cfg.names.push_back(name + "/effort");
+            cfg.names.push_back(name + "/kp");
+            cfg.names.push_back(name + "/kd");
+        }
     }
     return cfg;
 }
@@ -220,9 +273,6 @@ controller_interface::InterfaceConfiguration CarController::state_interface_conf
         cfg.names.push_back(name + "/effort");
     }
 
-    semantic_components::IMUSensor imu_sensor(imu_sensor_name_);
-    const auto imu_interfaces = imu_sensor.get_state_interface_names();
-    cfg.names.insert(cfg.names.end(), imu_interfaces.begin(), imu_interfaces.end());
     return cfg;
 }
 

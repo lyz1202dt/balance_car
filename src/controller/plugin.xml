@@ -7,16 +7,16 @@
   </class>
 
   <class
-    name="controller/MujocoSimSystem"
-    type="car_controller::MujocoSimSystem"
-    base_class_type="mujoco_ros2_control::MujocoSystemInterface">
-    <description>MuJoCo middle-layer system with joint torque interfaces and IMU bridge.</description>
+    name="car_controller/MujocoSimController"
+    type="car_controller::MujocoSimController"
+    base_class_type="controller_interface::ChainableControllerInterface">
+    <description>MuJoCo middle-layer chain controller with PD motor target interfaces.</description>
   </class>
 
   <class
-    name="controller/RealHardware"
+    name="car_controller/RealHardware"
     type="car_controller::RealHardware"
     base_class_type="hardware_interface::SystemInterface">
-    <description>Real hardware interface skeleton for motors and IMU.</description>
+    <description>Real hardware interface skeleton for motor state and target interfaces.</description>
   </class>
 </library>

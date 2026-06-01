@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <string>
 #include <vector>
 
@@ -30,18 +29,17 @@ private:
         double position{0.0};
         double velocity{0.0};
         double effort{0.0};
+        double position_command{0.0};
+        double velocity_command{0.0};
         double effort_command{0.0};
+        double kp_command{0.0};
+        double kd_command{0.0};
     };
 
-    static constexpr size_t kImuInterfaceCount = 10;
-
     std::vector<JointData> joints_;
-    std::array<double, kImuInterfaceCount> imu_state_{};
 
     std::vector<hardware_interface::StateInterface> state_interfaces_;
     std::vector<hardware_interface::CommandInterface> command_interfaces_;
-
-    std::string imu_sensor_name_{"imu"};
 };
 
 }  // namespace car_controller
