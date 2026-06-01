@@ -2,10 +2,10 @@ controller_manager:
   ros__parameters:
     update_rate: 500
 
-    car_controller:
-      type: car_controller/CarController
+    lqr_controller:
+      type: lqr_controller/LQRController
 
-car_controller:
+lqr_controller:
   ros__parameters:
     use_sim_time: false
     imu_topic: /imu/data

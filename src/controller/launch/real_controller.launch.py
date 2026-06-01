@@ -22,16 +22,16 @@ def generate_launch_description():
         output="screen",
     )
 
-    car_controller_spawner = Node(
+    lqr_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["car_controller", "--controller-manager", "/controller_manager"],
+        arguments=["lqr_controller", "--controller-manager", "/controller_manager"],
         output="screen",
     )
 
     return LaunchDescription(
         [
             ros2_control_node,
-            car_controller_spawner,
+            lqr_controller_spawner,
         ]
     )

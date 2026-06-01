@@ -38,19 +38,19 @@ endif()
 pluginlib_export_plugin_description_file(controller_interface plugin.xml)
 pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
 
-add_library(car_controller SHARED
+add_library(lqr_controller SHARED
   src/controller.cpp
   src/mujoco_sim.cpp
   src/real_hardware.cpp
 )
 
-target_include_directories(car_controller PUBLIC
+target_include_directories(lqr_controller PUBLIC
 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 $<INSTALL_INTERFACE:include>
 )
 
 ament_target_dependencies(
-  car_controller
+  lqr_controller
   rclcpp
   controller_interface
   pluginlib
@@ -62,7 +62,7 @@ ament_target_dependencies(
   urdf
 )
 
-install(TARGETS car_controller
+install(TARGETS lqr_controller
 LIBRARY DESTINATION lib)
 
 install(

@@ -9,7 +9,7 @@
 #include <robot_interfaces/msg/motor_state.hpp>
 #include <robot_interfaces/msg/motor_target.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
 namespace {
 
@@ -60,9 +60,9 @@ robot_interfaces::msg::MotorTarget& target_at(robot_interfaces::msg::RobotTarget
 
 }  // namespace
 
-CarController::CarController() = default;
+LQRController::LQRController() = default;
 
-controller_interface::CallbackReturn CarController::on_init() {
+controller_interface::CallbackReturn LQRController::on_init() {
     motor_joint_names_ = {
         "left_front_hip_joint",
         "left_rear_hip_joint",
@@ -92,7 +92,7 @@ controller_interface::CallbackReturn CarController::on_init() {
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn CarController::on_configure(const rclcpp_lifecycle::State& previous_state) {
+controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
 
     imu_topic_ = get_node()->get_parameter("imu_topic").as_string();
@@ -122,7 +122,7 @@ controller_interface::CallbackReturn CarController::on_configure(const rclcpp_li
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn CarController::on_activate(const rclcpp_lifecycle::State& previous_state) {
+controller_interface::CallbackReturn LQRController::on_activate(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
 
     if (state_publisher_) {
@@ -131,7 +131,7 @@ controller_interface::CallbackReturn CarController::on_activate(const rclcpp_lif
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-controller_interface::CallbackReturn CarController::on_deactivate(const rclcpp_lifecycle::State& previous_state) {
+controller_interface::CallbackReturn LQRController::on_deactivate(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
 
     if (state_publisher_) {
@@ -140,7 +140,7 @@ controller_interface::CallbackReturn CarController::on_deactivate(const rclcpp_l
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-controller_interface::return_type CarController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
+controller_interface::return_type LQRController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     (void)time;
     read_state_interfaces();
     update_motor_commands(period);
@@ -148,7 +148,7 @@ controller_interface::return_type CarController::update(const rclcpp::Time& time
     return controller_interface::return_type::OK;
 }
 
-void CarController::read_state_interfaces() {
+void LQRController::read_state_interfaces() {
     for (size_t motor_index = 0; motor_index < kMotorCount; ++motor_index) {
         const size_t state_index = motor_index * kStateInterfacesPerMotor;
         motor_state_[motor_index].position = state_interfaces_[state_index].get_value();
@@ -157,7 +157,7 @@ void CarController::read_state_interfaces() {
     }
 }
 
-void CarController::update_motor_commands(const rclcpp::Duration& period) {
+void LQRController::update_motor_commands(const rclcpp::Duration& period) {
     (void)period;
 
     // TODO(LQR-VMC): Replace this passthrough with the balance controller.
@@ -173,7 +173,7 @@ void CarController::update_motor_commands(const rclcpp::Duration& period) {
     }
 }
 
-void CarController::publish_robot_state() {
+void LQRController::publish_robot_state() {
     if (!state_publisher_ || !state_publisher_->is_activated()) {
         return;
     }
@@ -187,7 +187,7 @@ void CarController::publish_robot_state() {
     state_publisher_->publish(robot_state_);
 }
 
-bool CarController::load_default_pd_gains() {
+bool LQRController::load_default_pd_gains() {
     const auto kp_values = get_node()->get_parameter("default_kp").as_double_array();
     const auto kd_values = get_node()->get_parameter("default_kd").as_double_array();
     if (kp_values.size() != kMotorCount || kd_values.size() != kMotorCount) {
@@ -202,7 +202,7 @@ bool CarController::load_default_pd_gains() {
     return true;
 }
 
-void CarController::imu_callback(const sensor_msgs::msg::Imu& msg) {
+void LQRController::imu_callback(const sensor_msgs::msg::Imu& msg) {
     imu_state_.orientation = {
         msg.orientation.x,
         msg.orientation.y,
@@ -221,18 +221,18 @@ void CarController::imu_callback(const sensor_msgs::msg::Imu& msg) {
     };
 }
 
-double CarController::clamp_torque(const double value) const {
+double LQRController::clamp_torque(const double value) const {
     if (!std::isfinite(value)) {
         return 0.0;
     }
     return std::clamp(value, -torque_limit_, torque_limit_);
 }
 
-bool CarController::use_mujoco_sim_chain() const {
+bool LQRController::use_mujoco_sim_chain() const {
     return use_mujoco_sim_chain_;
 }
 
-bool CarController::use_sim_time_parameter() const {
+bool LQRController::use_sim_time_parameter() const {
     rclcpp::Parameter use_sim_time;
     if (get_node()->get_parameter("use_sim_time", use_sim_time)) {
         return use_sim_time.as_bool();
@@ -240,7 +240,7 @@ bool CarController::use_sim_time_parameter() const {
     return false;
 }
 
-controller_interface::InterfaceConfiguration CarController::command_interface_configuration() const {
+controller_interface::InterfaceConfiguration LQRController::command_interface_configuration() const {
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
@@ -263,7 +263,7 @@ controller_interface::InterfaceConfiguration CarController::command_interface_co
     return cfg;
 }
 
-controller_interface::InterfaceConfiguration CarController::state_interface_configuration() const {
+controller_interface::InterfaceConfiguration LQRController::state_interface_configuration() const {
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
@@ -276,6 +276,6 @@ controller_interface::InterfaceConfiguration CarController::state_interface_conf
     return cfg;
 }
 
-}  // namespace car_controller
+}  // namespace lqr_controller
 
-PLUGINLIB_EXPORT_CLASS(car_controller::CarController, controller_interface::ControllerInterface)
+PLUGINLIB_EXPORT_CLASS(lqr_controller::LQRController, controller_interface::ControllerInterface)

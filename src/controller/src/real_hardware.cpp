@@ -2,7 +2,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
 hardware_interface::CallbackReturn RealHardware::on_init(const hardware_interface::HardwareInfo& info) {
     if (hardware_interface::SystemInterface::on_init(info) != hardware_interface::CallbackReturn::SUCCESS) {
@@ -67,6 +67,6 @@ hardware_interface::return_type RealHardware::write(const rclcpp::Time& time, co
     return hardware_interface::return_type::OK;
 }
 
-}  // namespace car_controller
+}  // namespace lqr_controller
 
-PLUGINLIB_EXPORT_CLASS(car_controller::RealHardware, hardware_interface::SystemInterface)
+PLUGINLIB_EXPORT_CLASS(lqr_controller::RealHardware, hardware_interface::SystemInterface)

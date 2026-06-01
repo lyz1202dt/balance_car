@@ -7,7 +7,7 @@
 #include <controller_interface/chainable_controller_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
 class MujocoSimController : public controller_interface::ChainableControllerInterface {
 public:
@@ -56,4 +56,4 @@ private:
     double effort_limit_{20.0};
 };
 
-}  // namespace car_controller
+}  // namespace lqr_controller

@@ -5,7 +5,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
 namespace {
 
@@ -140,6 +140,6 @@ double MujocoSimController::clamp_effort(const double effort) const {
     return std::clamp(effort, -effort_limit_, effort_limit_);
 }
 
-}  // namespace car_controller
+}  // namespace lqr_controller
 
-PLUGINLIB_EXPORT_CLASS(car_controller::MujocoSimController, controller_interface::ChainableControllerInterface)
+PLUGINLIB_EXPORT_CLASS(lqr_controller::MujocoSimController, controller_interface::ChainableControllerInterface)

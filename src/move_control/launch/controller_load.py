@@ -38,7 +38,7 @@ def generate_launch_description():
     spawner_node = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["car_controller", "--controller-manager", "/controller_manager"],
+        arguments=["lqr_controller", "--controller-manager", "/controller_manager"],
         output="screen",
     )
 

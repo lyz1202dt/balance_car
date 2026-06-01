@@ -14,11 +14,11 @@
 #include <robot_interfaces/msg/robot_target.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
-class CarController : public controller_interface::ControllerInterface {
+class LQRController : public controller_interface::ControllerInterface {
 public:
-    CarController();
+    LQRController();
 
     controller_interface::CallbackReturn on_init() override;
     controller_interface::CallbackReturn on_configure(const rclcpp_lifecycle::State& previous_state) override;
@@ -76,4 +76,4 @@ private:
     bool use_mujoco_sim_chain_{false};
 };
 
-}  // namespace car_controller
+}  // namespace lqr_controller

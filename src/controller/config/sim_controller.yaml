@@ -3,17 +3,17 @@ controller_manager:
     update_rate: 500
 
     mujoco_sim_controller:
-      type: car_controller/MujocoSimController
+      type: lqr_controller/MujocoSimController
 
-    car_controller:
-      type: car_controller/CarController
+    lqr_controller:
+      type: lqr_controller/LQRController
 
 mujoco_sim_controller:
   ros__parameters:
     use_sim_time: true
     effort_limit: 20.0
 
-car_controller:
+lqr_controller:
   ros__parameters:
     use_sim_time: true
     imu_topic: /imu_imu_sensor/imu

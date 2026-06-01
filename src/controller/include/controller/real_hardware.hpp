@@ -8,7 +8,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/state.hpp>
 
-namespace car_controller {
+namespace lqr_controller {
 
 class RealHardware : public hardware_interface::SystemInterface {
 public:
@@ -42,4 +42,4 @@ private:
     std::vector<hardware_interface::CommandInterface> command_interfaces_;
 };
 
-}  // namespace car_controller
+}  // namespace lqr_controller

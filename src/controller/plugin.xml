@@ -1,21 +1,21 @@
-<library path="car_controller">
+<library path="lqr_controller">
   <class
-    name="car_controller/CarController"
-    type="car_controller::CarController"
+    name="lqr_controller/LQRController"
+    type="lqr_controller::LQRController"
     base_class_type="controller_interface::ControllerInterface">
     <description>High-level balance car LQR/VMC controller skeleton.</description>
   </class>
 
   <class
-    name="car_controller/MujocoSimController"
-    type="car_controller::MujocoSimController"
+    name="lqr_controller/MujocoSimController"
+    type="lqr_controller::MujocoSimController"
     base_class_type="controller_interface::ChainableControllerInterface">
     <description>MuJoCo middle-layer chain controller with PD motor target interfaces.</description>
   </class>
 
   <class
-    name="car_controller/RealHardware"
-    type="car_controller::RealHardware"
+    name="lqr_controller/RealHardware"
+    type="lqr_controller::RealHardware"
     base_class_type="hardware_interface::SystemInterface">
     <description>Real hardware interface skeleton for motor state and target interfaces.</description>
   </class>

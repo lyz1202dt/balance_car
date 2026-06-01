@@ -4,7 +4,7 @@
 
     <ros2_control name="car_system" type="system">
         <hardware>
-            <plugin>car_controller/RealHardware</plugin>
+            <plugin>lqr_controller/RealHardware</plugin>
         </hardware>
 
         <joint name="left_front_hip_joint">

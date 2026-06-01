@@ -44,10 +44,10 @@ def generate_launch_description():
         output="screen",
     )
 
-    car_controller_spawner = Node(
+    lqr_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["car_controller", "--controller-manager", "/controller_manager"],
+        arguments=["lqr_controller", "--controller-manager", "/controller_manager"],
         output="screen",
     )
 
@@ -60,11 +60,11 @@ def generate_launch_description():
         )
     )
 
-    load_car_controller = RegisterEventHandler(
+    load_lqr_controller = RegisterEventHandler(
         OnProcessExit(
             target_action=mujoco_sim_controller_spawner,
             on_exit=[
-                car_controller_spawner,
+                lqr_controller_spawner,
             ],
         )
     )
@@ -76,6 +76,6 @@ def generate_launch_description():
             DeclareLaunchArgument("realtime_factor", default_value="1.0"),
             mujoco,
             load_controllers,
-            load_car_controller,
+            load_lqr_controller,
         ]
     )
