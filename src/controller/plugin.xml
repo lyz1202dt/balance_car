@@ -1,0 +1,6 @@
+<library path="controller">
+  <class
+    name="controller/CarController"
+    type="controller::CarController"
+    base_class_type="controller_interface::ControllerInterface"/>
+</library>

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(car_controller)
+project(controller)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -49,6 +49,7 @@ ament_target_dependencies(
   controller_interface
   pluginlib
   hardware_interface
+  rclcpp_lifecycle
   robot_interfaces
 )
 
@@ -62,5 +63,10 @@ install(
 
 install(DIRECTORY include/
 DESTINATION include)
+
+install(
+  DIRECTORY config launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

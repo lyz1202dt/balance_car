@@ -1,15 +1,23 @@
-#include <robot_interfaces/msg//wheel.hpp>
+#pragma once
+
+#include <array>
+#include <string>
+#include <vector>
+
 #include <controller_interface/controller_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
-#include <robot_interfaces/msg/detail/wheel_exp__struct.hpp>
-#include <string>
-#include <chrono>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <robot_interfaces/msg/robot_state.hpp>
+#include <robot_interfaces/msg/robot_target.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 
 namespace car_controller {
+
 class CarController : public controller_interface::ControllerInterface {
 public:
     CarController();
+
     controller_interface::CallbackReturn on_init() override;
     controller_interface::CallbackReturn on_configure(const rclcpp_lifecycle::State& previous_state) override;
     controller_interface::CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override;
@@ -21,16 +29,14 @@ public:
     controller_interface::InterfaceConfiguration state_interface_configuration() const override;
 
 private:
-    rclcpp::Publisher<robot_interfaces::msg::Wheel>::SharedPtr state_publisher;
-    rclcpp::Subscription<robot_interfaces::msg::WheelExp>::SharedPtr target_subscriber;
-    std::vector<std::string> wheel_name_;
+    static constexpr size_t kMotorCount = 6;
+    static constexpr size_t kStateInterfacesPerMotor = 3;
+
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr robot_exp_vel;
     rclcpp_lifecycle::LifecycleNode::OnSetParametersCallbackHandle::SharedPtr param_cb_;
+    std::array<std::string, kMotorCount> motor_joint_names_{};
 
-    robot_interfaces::msg::WheelExp wheel_target;
-    robot_interfaces::msg::Wheel wheel_state;
-
-    double joint_torque_filter_gate{0.8};
-    double joint_omega_filter_gate{0.8};
-    double wheel_kd{0.0};
+    double torque_limit_{20.0};
 };
-} // namespace dog_controller
+
+}  // namespace car_controller

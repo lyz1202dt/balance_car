@@ -1,14 +1,41 @@
 <?xml version="1.0"?>
-<robot name="balance_car">
+<robot name="five_bar_wheel_leg_balance_car">
+    <material name="body_mat">
+        <color rgba="0.56 0.55 0.41 1.0" />
+    </material>
+    <material name="link_teal">
+        <color rgba="0.0 0.42 0.42 1.0" />
+    </material>
+    <material name="link_dark">
+        <color rgba="0.25 0.27 0.26 1.0" />
+    </material>
+    <material name="wheel_mat">
+        <color rgba="0.0 0.36 0.35 1.0" />
+    </material>
+    <material name="metal_mat">
+        <color rgba="0.72 0.72 0.70 1.0" />
+    </material>
 
-
-    <ros2_control name="dog_system" type="system">
-
+    <ros2_control name="car_system" type="system">
         <hardware>
             <plugin>mujoco_ros2_control/MujocoSystem</plugin>
         </hardware>
 
         <joint name="left_wheel_joint">
+            <command_interface name="effort" />
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
+
+        <joint name="left_front_hip_joint">
+            <command_interface name="effort" />
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
+
+        <joint name="left_rear_hip_joint">
             <command_interface name="effort" />
             <state_interface name="position" />
             <state_interface name="velocity" />
@@ -21,132 +48,423 @@
             <state_interface name="velocity" />
             <state_interface name="effort" />
         </joint>
+
+        <joint name="right_front_hip_joint">
+            <command_interface name="effort" />
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
+
+        <joint name="right_rear_hip_joint">
+            <command_interface name="effort" />
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+            <state_interface name="effort" />
+        </joint>
     </ros2_control>
 
-
-    <!-- 世界坐标系 -->
     <link name="world" />
 
-    <!-- 世界坐标系与base_link的6自由度浮动关节 -->
     <joint name="floating_base" type="floating">
         <parent link="world" />
         <child link="base_link" />
         <origin xyz="0 0 0" rpy="0 0 0" />
     </joint>
 
-    <!-- 车体主体（长方体） -->
     <link name="base_link">
         <inertial>
-            <!-- 质量：1kg -->
-            <mass value="1.0" />
-            <!-- 惯性张量（对于长方体） -->
-            <!-- 宽度增加1.8倍：0.08*1.8=0.144m -->
-            <!-- Ixx = (m/12)*(Ly^2 + Lz^2) = (1/12)*(0.144^2 + 0.3^2) = 0.0088 -->
-            <!-- Iyy = (m/12)*(Lx^2 + Lz^2) = (1/12)*(0.12^2 + 0.3^2) = 0.0081 -->
-            <!-- Izz = (m/12)*(Lx^2 + Ly^2) = (1/12)*(0.12^2 + 0.144^2) = 0.0024 -->
-            <inertia ixx="0.0088" ixy="0.0" ixz="0.0" iyy="0.0081" iyz="0.0" izz="0.0024" />
-            <origin xyz="0 0 0.20" rpy="0 0 0" />
+            <origin xyz="0 0 0.4865" rpy="0 0 0" />
+            <mass value="2.30" />
+            <inertia ixx="0.0423" ixy="0.0" ixz="0.0" iyy="0.0447" iyz="0.0" izz="0.0406" />
         </inertial>
         <visual>
+            <origin xyz="0 0 0.42" rpy="0 0 0" />
             <geometry>
-                <box size="0.12 0.144 0.3" />
+                <box size="0.38 0.36 0.12" />
             </geometry>
-            <origin xyz="0 0 0.20" rpy="0 0 0" />
-            <material name="body_color">
-                <color rgba="0.1 0.1 0.1 1.0" />
-            </material>
+            <material name="body_mat" />
         </visual>
         <collision>
+            <origin xyz="0 0 0.42" rpy="0 0 0" />
             <geometry>
-                <box size="0.12 0.144 0.3" />
+                <box size="0.38 0.36 0.12" />
             </geometry>
-            <origin xyz="0 0 0.20" rpy="0 0 0" />
+        </collision>
+        <visual>
+            <origin xyz="0 0 0.60" rpy="0 0 0" />
+            <geometry>
+                <box size="0.24 0.22 0.24" />
+            </geometry>
+            <material name="body_mat" />
+        </visual>
+        <collision>
+            <origin xyz="0 0 0.60" rpy="0 0 0" />
+            <geometry>
+                <box size="0.24 0.22 0.24" />
+            </geometry>
         </collision>
     </link>
 
-    <!-- 左轮 -->
+    <!-- Left five-bar wheel leg, link plane y=0.17, wheel center y=0.23. -->
+    <link name="left_front_upper_link">
+        <inertial>
+            <origin xyz="0.07 0 -0.06" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00012" ixy="0.0" ixz="0.0" iyy="0.00029" iyz="0.0" izz="0.00022" />
+        </inertial>
+        <visual>
+            <origin xyz="0.07 0 -0.06" rpy="0 2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+            <material name="link_teal" />
+        </visual>
+        <collision>
+            <origin xyz="0.07 0 -0.06" rpy="0 2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="left_front_hip_joint" type="revolute">
+        <parent link="base_link" />
+        <child link="left_front_upper_link" />
+        <origin xyz="0.14 0.17 0.36" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-1.20" upper="1.20" effort="18" velocity="10" />
+        <dynamics damping="0.04" friction="0.01" />
+    </joint>
+
+    <link name="left_front_lower_link">
+        <inertial>
+            <origin xyz="-0.14 0 -0.07" rpy="0 0 0" />
+            <mass value="0.12" />
+            <inertia ixx="0.00018" ixy="0.0" ixz="0.0" iyy="0.00108" iyz="0.0" izz="0.00094" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.14 0 -0.07" rpy="0 -2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+            <material name="link_dark" />
+        </visual>
+        <collision>
+            <origin xyz="-0.14 0 -0.07" rpy="0 -2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="left_front_knee_joint" type="revolute">
+        <parent link="left_front_upper_link" />
+        <child link="left_front_lower_link" />
+        <origin xyz="0.14 0 -0.12" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.40" upper="2.40" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
+    <link name="left_rear_upper_link">
+        <inertial>
+            <origin xyz="-0.07 0 -0.06" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00012" ixy="0.0" ixz="0.0" iyy="0.00029" iyz="0.0" izz="0.00022" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.07 0 -0.06" rpy="0 -2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+            <material name="link_teal" />
+        </visual>
+        <collision>
+            <origin xyz="-0.07 0 -0.06" rpy="0 -2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="left_rear_hip_joint" type="revolute">
+        <parent link="base_link" />
+        <child link="left_rear_upper_link" />
+        <origin xyz="-0.14 0.17 0.36" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-1.20" upper="1.20" effort="18" velocity="10" />
+        <dynamics damping="0.04" friction="0.01" />
+    </joint>
+
+    <link name="left_rear_lower_link">
+        <inertial>
+            <origin xyz="0.14 0 -0.07" rpy="0 0 0" />
+            <mass value="0.12" />
+            <inertia ixx="0.00018" ixy="0.0" ixz="0.0" iyy="0.00108" iyz="0.0" izz="0.00094" />
+        </inertial>
+        <visual>
+            <origin xyz="0.14 0 -0.07" rpy="0 2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+            <material name="link_dark" />
+        </visual>
+        <collision>
+            <origin xyz="0.14 0 -0.07" rpy="0 2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="left_rear_knee_joint" type="revolute">
+        <parent link="left_rear_upper_link" />
+        <child link="left_rear_lower_link" />
+        <origin xyz="-0.14 0 -0.12" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.40" upper="2.40" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
+    <link name="left_wheel_carrier">
+        <inertial>
+            <origin xyz="0 0.03 0" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00008" ixy="0.0" ixz="0.0" iyy="0.00004" iyz="0.0" izz="0.00008" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0.03 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.025" length="0.12" />
+            </geometry>
+            <material name="metal_mat" />
+        </visual>
+        <collision>
+            <origin xyz="0 0.03 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.025" length="0.12" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="left_rear_ankle_joint" type="revolute">
+        <parent link="left_rear_lower_link" />
+        <child link="left_wheel_carrier" />
+        <origin xyz="0.28 0 -0.14" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.80" upper="2.80" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
     <link name="left_wheel">
         <inertial>
-            <!-- 轮子质量：0.2kg -->
-            <mass value="0.2" />
-            <!-- 圆柱体惯性张量：I = (m/12)*(3*r^2 + h^2) 绕轴向 -->
-            <!-- 对于半径r=0.05m，厚度h=0.04m的圆柱体 -->
-            <!-- 绕轴向：Ixx = (1/2)*m*r^2 = 0.5*0.2*0.05^2 = 0.00025 -->
-            <!-- 绕径向：Iyy = Izz = (1/12)*m*(3*r^2 + h^2) = (1/12)*0.2*(3*0.05^2 + 0.04^2) = 0.000425 -->
-            <inertia ixx="0.00025" ixy="0.0" ixz="0.0" iyy="0.000425" iyz="0.0" izz="0.000425" />
             <origin xyz="0 0 0" rpy="0 0 0" />
+            <mass value="0.32" />
+            <inertia ixx="0.00102" ixy="0.0" ixz="0.0" iyy="0.00102" iyz="0.0" izz="0.00160" />
         </inertial>
         <visual>
-            <geometry>
-                <cylinder radius="0.05" length="0.04" />
-            </geometry>
             <origin xyz="0 0 0" rpy="1.5708 0 0" />
-            <material name="wheel_color">
-                <color rgba="0.2 0.2 0.2 1.0" />
-            </material>
+            <geometry>
+                <cylinder radius="0.10" length="0.055" />
+            </geometry>
+            <material name="wheel_mat" />
         </visual>
         <collision>
-            <geometry>
-                <cylinder radius="0.05" length="0.04" />
-            </geometry>
             <origin xyz="0 0 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.10" length="0.055" />
+            </geometry>
         </collision>
     </link>
 
-    <!-- 右轮 -->
+    <joint name="left_wheel_joint" type="continuous">
+        <parent link="left_wheel_carrier" />
+        <child link="left_wheel" />
+        <origin xyz="0 0.06 0" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit effort="16" velocity="45" />
+        <dynamics damping="0.01" friction="0.004" />
+    </joint>
+
+    <!-- Right five-bar wheel leg, mirrored about the x-z plane. -->
+    <link name="right_front_upper_link">
+        <inertial>
+            <origin xyz="0.07 0 -0.06" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00012" ixy="0.0" ixz="0.0" iyy="0.00029" iyz="0.0" izz="0.00022" />
+        </inertial>
+        <visual>
+            <origin xyz="0.07 0 -0.06" rpy="0 2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+            <material name="link_teal" />
+        </visual>
+        <collision>
+            <origin xyz="0.07 0 -0.06" rpy="0 2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="right_front_hip_joint" type="revolute">
+        <parent link="base_link" />
+        <child link="right_front_upper_link" />
+        <origin xyz="0.14 -0.17 0.36" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-1.20" upper="1.20" effort="18" velocity="10" />
+        <dynamics damping="0.04" friction="0.01" />
+    </joint>
+
+    <link name="right_front_lower_link">
+        <inertial>
+            <origin xyz="-0.14 0 -0.07" rpy="0 0 0" />
+            <mass value="0.12" />
+            <inertia ixx="0.00018" ixy="0.0" ixz="0.0" iyy="0.00108" iyz="0.0" izz="0.00094" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.14 0 -0.07" rpy="0 -2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+            <material name="link_dark" />
+        </visual>
+        <collision>
+            <origin xyz="-0.14 0 -0.07" rpy="0 -2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="right_front_knee_joint" type="revolute">
+        <parent link="right_front_upper_link" />
+        <child link="right_front_lower_link" />
+        <origin xyz="0.14 0 -0.12" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.40" upper="2.40" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
+    <link name="right_rear_upper_link">
+        <inertial>
+            <origin xyz="-0.07 0 -0.06" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00012" ixy="0.0" ixz="0.0" iyy="0.00029" iyz="0.0" izz="0.00022" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.07 0 -0.06" rpy="0 -2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+            <material name="link_teal" />
+        </visual>
+        <collision>
+            <origin xyz="-0.07 0 -0.06" rpy="0 -2.2794 0" />
+            <geometry>
+                <cylinder radius="0.012" length="0.1844" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="right_rear_hip_joint" type="revolute">
+        <parent link="base_link" />
+        <child link="right_rear_upper_link" />
+        <origin xyz="-0.14 -0.17 0.36" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-1.20" upper="1.20" effort="18" velocity="10" />
+        <dynamics damping="0.04" friction="0.01" />
+    </joint>
+
+    <link name="right_rear_lower_link">
+        <inertial>
+            <origin xyz="0.14 0 -0.07" rpy="0 0 0" />
+            <mass value="0.12" />
+            <inertia ixx="0.00018" ixy="0.0" ixz="0.0" iyy="0.00108" iyz="0.0" izz="0.00094" />
+        </inertial>
+        <visual>
+            <origin xyz="0.14 0 -0.07" rpy="0 2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+            <material name="link_dark" />
+        </visual>
+        <collision>
+            <origin xyz="0.14 0 -0.07" rpy="0 2.0344 0" />
+            <geometry>
+                <cylinder radius="0.011" length="0.3130" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="right_rear_knee_joint" type="revolute">
+        <parent link="right_rear_upper_link" />
+        <child link="right_rear_lower_link" />
+        <origin xyz="-0.14 0 -0.12" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.40" upper="2.40" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
+    <link name="right_wheel_carrier">
+        <inertial>
+            <origin xyz="0 -0.03 0" rpy="0 0 0" />
+            <mass value="0.09" />
+            <inertia ixx="0.00008" ixy="0.0" ixz="0.0" iyy="0.00004" iyz="0.0" izz="0.00008" />
+        </inertial>
+        <visual>
+            <origin xyz="0 -0.03 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.025" length="0.12" />
+            </geometry>
+            <material name="metal_mat" />
+        </visual>
+        <collision>
+            <origin xyz="0 -0.03 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.025" length="0.12" />
+            </geometry>
+        </collision>
+    </link>
+
+    <joint name="right_rear_ankle_joint" type="revolute">
+        <parent link="right_rear_lower_link" />
+        <child link="right_wheel_carrier" />
+        <origin xyz="0.28 0 -0.14" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit lower="-2.80" upper="2.80" effort="3" velocity="12" />
+        <dynamics damping="0.02" friction="0.004" />
+    </joint>
+
     <link name="right_wheel">
         <inertial>
-            <!-- 轮子质量：0.2kg -->
-            <mass value="0.2" />
-            <!-- 圆柱体惯性张量 -->
-            <inertia ixx="0.00025" ixy="0.0" ixz="0.0" iyy="0.000425" iyz="0.0" izz="0.000425" />
             <origin xyz="0 0 0" rpy="0 0 0" />
+            <mass value="0.32" />
+            <inertia ixx="0.00102" ixy="0.0" ixz="0.0" iyy="0.00102" iyz="0.0" izz="0.00160" />
         </inertial>
         <visual>
-            <geometry>
-                <cylinder radius="0.05" length="0.04" />
-            </geometry>
             <origin xyz="0 0 0" rpy="1.5708 0 0" />
-            <material name="wheel_color">
-                <color rgba="0.2 0.2 0.2 1.0" />
-            </material>
+            <geometry>
+                <cylinder radius="0.10" length="0.055" />
+            </geometry>
+            <material name="wheel_mat" />
         </visual>
         <collision>
-            <geometry>
-                <cylinder radius="0.05" length="0.04" />
-            </geometry>
             <origin xyz="0 0 0" rpy="1.5708 0 0" />
+            <geometry>
+                <cylinder radius="0.10" length="0.055" />
+            </geometry>
         </collision>
     </link>
 
-    <!-- 左轮与车体的连接关节（连续转动） -->
-    <joint name="left_wheel_joint" type="continuous">
-        <!-- 关节轴向为X轴，使轮子绕X轴转动，车辆沿X轴前后移动 -->
-        <axis xyz="0 1 0" />
-        <parent link="base_link" />
-        <child link="left_wheel" />
-
-        <origin xyz="0 0.10 0.05" rpy="0 0 0" />
-        <limit effort="10" velocity="10" />
-    </joint>
-
-    <!-- 右轮与车体的连接关节（连续转动） -->
     <joint name="right_wheel_joint" type="continuous">
-        <!-- 关节轴向为X轴，使轮子绕X轴转动，车辆沿X轴前后移动 -->
-        <axis xyz="0 1 0" />
-        <parent link="base_link" />
+        <parent link="right_wheel_carrier" />
         <child link="right_wheel" />
-        <!-- 右轮在Y方向距离为-0.10m -->
-        <origin xyz="0 -0.10 0.05" rpy="0 0 0" />
-        <limit effort="10" velocity="10" />
+        <origin xyz="0 -0.06 0" rpy="0 0 0" />
+        <axis xyz="0 1 0" />
+        <limit effort="16" velocity="45" />
+        <dynamics damping="0.01" friction="0.004" />
     </joint>
-
-    <!-- 材料定义 -->
-    <material name="body_color">
-        <color rgba="0.1 0.1 0.1 1.0" />
-    </material>
-    <material name="wheel_color">
-        <color rgba="0.2 0.2 0.2 1.0" />
-    </material>
-
 </robot>

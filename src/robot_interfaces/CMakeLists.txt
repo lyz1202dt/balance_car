@@ -15,8 +15,10 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/Wheel.msg"
-  "msg/WheelExp.msg"
+  "msg/RobotState.msg"
+  "msg/RobotTarget.msg"
+  "msg/MotorState.msg"
+  "msg/MotorTarget.msg"
 )
 
 if(BUILD_TESTING)

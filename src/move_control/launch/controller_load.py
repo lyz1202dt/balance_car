@@ -11,7 +11,7 @@ def generate_launch_description():
     )
 
     controller_yaml=os.path.join(
-        get_package_share_directory("launch_pack"),
+        get_package_share_directory("move_control"),
         "config", "ros2_controller.yaml"
     )
 

@@ -175,5 +175,10 @@ move_control
 DESTINATION lib/${PROJECT_NAME}
 )
 
+install(
+  DIRECTORY launch config rviz 
+  DESTINATION share/${PROJECT_NAME}
+)
+
 
 ament_package()
