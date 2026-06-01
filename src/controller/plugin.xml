@@ -1,6 +1,22 @@
-<library path="controller">
+<library path="car_controller">
   <class
-    name="controller/CarController"
-    type="controller::CarController"
-    base_class_type="controller_interface::ControllerInterface"/>
+    name="car_controller/CarController"
+    type="car_controller::CarController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>High-level balance car LQR/VMC controller skeleton.</description>
+  </class>
+
+  <class
+    name="controller/MujocoSimSystem"
+    type="car_controller::MujocoSimSystem"
+    base_class_type="mujoco_ros2_control::MujocoSystemInterface">
+    <description>MuJoCo middle-layer system with joint torque interfaces and IMU bridge.</description>
+  </class>
+
+  <class
+    name="controller/RealHardware"
+    type="car_controller::RealHardware"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>Real hardware interface skeleton for motors and IMU.</description>
+  </class>
 </library>

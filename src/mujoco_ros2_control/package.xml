@@ -39,6 +39,6 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-    <mujoco_ros2_control plugin="${prefix}/mujoco_hardware_plugins.xml"/>
+    <mujoco_ros2_control plugin="${prefix}/mujoco_system_plugins.xml"/>
   </export>
 </package>

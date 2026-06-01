@@ -10,7 +10,7 @@ controller_manager:
 
 car_controller:
   ros__parameters:
-    use_sim_time: true
+    use_sim_time: false
     joints:
       - left_front_hip_joint
       - left_rear_hip_joint

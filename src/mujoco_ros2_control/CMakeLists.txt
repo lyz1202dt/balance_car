@@ -182,6 +182,7 @@ install(TARGETS
 
 # Install MJCF models
 install(DIRECTORY mjcf DESTINATION share/${PROJECT_NAME}/)
+install(DIRECTORY include/ DESTINATION include)
 
 # Install Python scripts
 ament_python_install_package(scripts)
@@ -196,7 +197,6 @@ ament_export_include_directories(include)
 ament_export_dependencies(ament_cmake)
 ament_export_dependencies(rclcpp)
 ament_export_libraries(
-    ${PROJECT_NAME}
     mujoco_system_plugins
 )
 

@@ -18,7 +18,11 @@ find_package(controller_interface REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(robot_interfaces REQUIRED)
+find_package(mujoco_ros2_control REQUIRED)
+find_package(urdf REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -33,9 +37,13 @@ if(BUILD_TESTING)
 endif()
 
 pluginlib_export_plugin_description_file(controller_interface plugin.xml)
+pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
+pluginlib_export_plugin_description_file(mujoco_ros2_control plugin.xml)
 
 add_library(car_controller SHARED
-  src/car_controller.cpp
+  src/controller.cpp
+  src/mujoco_sim.cpp
+  src/real_hardware.cpp
 )
 
 target_include_directories(car_controller PUBLIC
@@ -50,7 +58,11 @@ ament_target_dependencies(
   pluginlib
   hardware_interface
   rclcpp_lifecycle
+  geometry_msgs
+  sensor_msgs
   robot_interfaces
+  mujoco_ros2_control
+  urdf
 )
 
 install(TARGETS car_controller
