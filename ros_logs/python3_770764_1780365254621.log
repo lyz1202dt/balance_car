@@ -1,0 +1,3 @@
+[INFO] [1780365254.671933447] [spawner_mujoco_sim_controller]: waiting for service /controller_manager/list_controllers to become available...
+[INFO] [1780365254.936036151] [spawner_mujoco_sim_controller]: [94mLoaded [1mmujoco_sim_controller[0m
+[INFO] [1780365255.038773327] [spawner_mujoco_sim_controller]: [92mConfigured and activated [1mmujoco_sim_controller[0m

@@ -31,7 +31,7 @@ controller_interface::CallbackReturn MujocoSimController::on_init() {
         "right_wheel_joint",
     };
 
-    get_node()->declare_parameter("effort_limit", effort_limit_);
+    auto_declare<double>("effort_limit", effort_limit_);
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -86,12 +86,12 @@ std::vector<hardware_interface::CommandInterface> MujocoSimController::on_export
     interfaces.reserve(reference_interfaces_.size());
 
     for (size_t i = 0; i < kMotorCount; ++i) {
-        const auto prefix = std::string(kReferencePrefix) + "/" + motor_joint_names_[i];
-        interfaces.emplace_back(prefix, "position", &reference_interfaces_[target_index(i, 0)]);
-        interfaces.emplace_back(prefix, "velocity", &reference_interfaces_[target_index(i, 1)]);
-        interfaces.emplace_back(prefix, "effort", &reference_interfaces_[target_index(i, 2)]);
-        interfaces.emplace_back(prefix, "kp", &reference_interfaces_[target_index(i, 3)]);
-        interfaces.emplace_back(prefix, "kd", &reference_interfaces_[target_index(i, 4)]);
+        const auto joint_prefix = motor_joint_names_[i] + "/";
+        interfaces.emplace_back(kReferencePrefix, joint_prefix + "position", &reference_interfaces_[target_index(i, 0)]);
+        interfaces.emplace_back(kReferencePrefix, joint_prefix + "velocity", &reference_interfaces_[target_index(i, 1)]);
+        interfaces.emplace_back(kReferencePrefix, joint_prefix + "effort", &reference_interfaces_[target_index(i, 2)]);
+        interfaces.emplace_back(kReferencePrefix, joint_prefix + "kp", &reference_interfaces_[target_index(i, 3)]);
+        interfaces.emplace_back(kReferencePrefix, joint_prefix + "kd", &reference_interfaces_[target_index(i, 4)]);
     }
     return interfaces;
 }

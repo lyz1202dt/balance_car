@@ -73,10 +73,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
     };
 
     auto node = get_node();
-    node->declare_parameter("imu_topic", imu_topic_);
-    node->declare_parameter("torque_limit", torque_limit_);
-    node->declare_parameter("default_kp", std::vector<double>(kMotorCount, 0.0));
-    node->declare_parameter("default_kd", std::vector<double>(kMotorCount, 0.0));
+    auto_declare<std::string>("imu_topic", imu_topic_);
+    auto_declare<double>("torque_limit", torque_limit_);
+    auto_declare<std::vector<double>>("default_kp", std::vector<double>(kMotorCount, 0.0));
+    auto_declare<std::vector<double>>("default_kd", std::vector<double>(kMotorCount, 0.0));
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;

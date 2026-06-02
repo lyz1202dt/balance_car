@@ -1,0 +1,5 @@
+1780341005.5060132 [INFO] [launch]: All log files can be found below /space2/Project/balance_car2/ros_logs/2026-06-02-03-10-05-505437-lyz-Legion-Y7000P-IRX9-11
+1780341005.5109105 [INFO] [launch]: Default logging verbosity is set to INFO
+1780341005.5667655 [INFO] [mujoco_ros2_control-1]: process started with pid [12]
+1780341005.5676968 [INFO] [spawner-2]: process started with pid [14]
+1780341005.8118024 [ERROR] [mujoco_ros2_control-1]: process has died [pid 12, exit code -6, cmd '/home/lyz/Project/balance_car2/install/mujoco_ros2_control/lib/mujoco_ros2_control/mujoco_ros2_control --ros-args --params-file /tmp/launch_params_8hkw2eev --params-file /home/lyz/Project/balance_car2/install/controller/share/controller/config/sim_controller.yaml --params-file /tmp/launch_params_4x4jeysr --params-file /tmp/launch_params_6it4opel --params-file /tmp/launch_params_hj3cwdnv --params-file /tmp/launch_params_v83b0kv9'].
