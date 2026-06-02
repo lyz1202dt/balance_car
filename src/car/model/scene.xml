@@ -2,7 +2,7 @@
     <option gravity="0 0 -9.81" />
     <include file="car.xml" />
 
-    <statistic center="0 0 0.8" extent="0.8" />
+    <statistic center="0 0 1.3" extent="0.8" />
 
     <visual>
         <headlight diffuse="0.1 0.1 0.1" ambient="0.3 0.3 0.3" specular="0 0 0" />
