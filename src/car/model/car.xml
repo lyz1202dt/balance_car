@@ -130,4 +130,9 @@
     <gyro name="imu_main_gyro" site="imu" noise="5e-4" cutoff="34.9"/>
     <framequat name="imu_main_quat" objtype="site" objname="imu"/>
   </sensor>
+  <!-- <keyframe> -->
+    <!-- qpos order: free joint (pos x y z + quat w x y z) followed by joint qpos in appearance order -->
+    <!-- <key name="home" qpos="0 0 1 1 0 0 0 0.345 2.35 2.79 -2.35 -2.54 -8.74 0.389 2.28 2.74 -2.28 0.662 0.153" 
+    ctrl="0.345 2.79 0.0 0.389 2.74  0.0" />
+  </keyframe> -->
 </mujoco>
