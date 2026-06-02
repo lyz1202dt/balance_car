@@ -1,5 +1,6 @@
 #pragma once
 
+#include "tools/leg_calc.hpp"
 #include <array>
 #include <string>
 #include <vector>
@@ -17,19 +18,6 @@
 #include <Eigen/Dense>
 
 namespace lqr_controller {
-
-class LegCalc{
-public:
-    LegCalc(const double &l0,const double &l1,const double &l2);
-    Eigen::Vector2d calc_position(const Eigen::Vector2d &radian);
-    Eigen::Vector2d calc_radian(const Eigen::Vector2d &position);
-    Eigen::Vector2d calc_torque(const Eigen::Vector2d &radian,const Eigen::Vector2d &force);
-    Eigen::Vector2d calc_force(const Eigen::Vector2d &radian,const Eigen::Vector2d &torque);
-private:
-    Eigen::Matrix2d calc_jacobian(const Eigen::Vector2d &radian) const;
-
-    double l0,l1,l2;
-};
 
 class LQRController : public controller_interface::ControllerInterface {
 public:
@@ -62,7 +50,7 @@ private:
     };
 
     void read_state_interfaces();
-    void update_motor_commands(const rclcpp::Duration& period);
+    void update_motor_commands(const rclcpp::Time& time,const rclcpp::Duration& period);
     void publish_robot_state();
     bool load_default_pd_gains();
     void imu_callback(const sensor_msgs::msg::Imu& msg);
@@ -71,9 +59,7 @@ private:
     bool use_sim_time_parameter() const;
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr robot_exp_vel;
-    rclcpp::Subscription<robot_interfaces::msg::RobotTarget>::SharedPtr target_subscriber_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscriber_;
-    rclcpp_lifecycle::LifecyclePublisher<robot_interfaces::msg::RobotState>::SharedPtr state_publisher_;
     rclcpp_lifecycle::LifecycleNode::OnSetParametersCallbackHandle::SharedPtr param_cb_;
 
     std::array<std::string, kMotorCount> motor_joint_names_{};
@@ -89,6 +75,10 @@ private:
     std::array<double, kMotorCount> default_kd_{};
     std::string imu_topic_{"/imu_imu_sensor/imu"};
     bool use_mujoco_sim_chain_{false};
+
+
+    //LQR自动控制相关的变量
+    LegCalc leg;
 };
 
 }  // namespace lqr_controller
