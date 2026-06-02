@@ -1,7 +1,0 @@
-1780365254.4157186 [INFO] [launch]: All log files can be found below /space2/Project/balance_car2/ros_logs/2026-06-02-09-54-14-415154-lyz-Legion-Y7000P-IRX9-770761
-1780365254.4158072 [INFO] [launch]: Default logging verbosity is set to INFO
-1780365254.4736481 [INFO] [mujoco_ros2_control-1]: process started with pid [770762]
-1780365254.4747956 [INFO] [spawner-2]: process started with pid [770764]
-1780365255.1619546 [INFO] [spawner-2]: process has finished cleanly [pid 770764]
-1780365255.1633251 [INFO] [spawner-3]: process started with pid [770860]
-1780365255.5983717 [INFO] [spawner-3]: process has finished cleanly [pid 770860]
