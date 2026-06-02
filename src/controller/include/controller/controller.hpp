@@ -14,7 +14,22 @@
 #include <robot_interfaces/msg/robot_target.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
+#include <Eigen/Dense>
+
 namespace lqr_controller {
+
+class LegCalc{
+public:
+    LegCalc(const double &l0,const double &l1,const double &l2);
+    Eigen::Vector2d calc_position(const Eigen::Vector2d &radian);
+    Eigen::Vector2d calc_radian(const Eigen::Vector2d &position);
+    Eigen::Vector2d calc_torque(const Eigen::Vector2d &radian,const Eigen::Vector2d &force);
+    Eigen::Vector2d calc_force(const Eigen::Vector2d &radian,const Eigen::Vector2d &torque);
+private:
+    Eigen::Matrix2d calc_jacobian(const Eigen::Vector2d &radian) const;
+
+    double l0,l1,l2;
+};
 
 class LQRController : public controller_interface::ControllerInterface {
 public:

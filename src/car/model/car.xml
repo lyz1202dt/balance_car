@@ -17,6 +17,7 @@
           <inertial pos="-0.14 0 -0.07" quat="0.5 0.5 0.5 0.5" mass="0.12" diaginertia="0.00108 0.00094 0.00018"/>
           <joint name="left_front_knee_joint" pos="0 0 0" axis="0 1 0" range="-2.4 2.4" actuatorfrcrange="-3 3" damping="0.02" frictionloss="0.004"/>
           <geom size="0.011 0.1565" pos="-0.14 0 -0.07" quat="0.52575 0 -0.850639 0" type="cylinder" rgba="0.25 0.27 0.26 1"/>
+          <site name="left_front_closure_site" pos="-0.28 0 -0.14" size="0.01" rgba="1 0.2 0.2 1"/>
         </body>
       </body>
       <body name="left_rear_upper_link" pos="-0.14 0.17 0.36">
@@ -30,6 +31,7 @@
           <body name="left_wheel_carrier" pos="0.28 0 -0.14">
             <inertial pos="0 0.03 0" quat="0.707107 0.707107 0 0" mass="0.09" diaginertia="8e-05 8e-05 4e-05"/>
             <joint name="left_rear_ankle_joint" pos="0 0 0" axis="0 1 0" range="-2.8 2.8" actuatorfrcrange="-3 3" damping="0.02" frictionloss="0.004"/>
+            <site name="left_wheel_carrier_closure_site" pos="0 0 0" size="0.01" rgba="1 0.2 0.2 1"/>
             <geom size="0.025 0.06" pos="0 0.03 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.72 0.72 0.7 1"/>
             <body name="left_wheel" pos="0 0.06 0">
               <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.32" diaginertia="0.0016 0.00102 0.00102"/>
@@ -47,6 +49,7 @@
           <inertial pos="-0.14 0 -0.07" quat="0.5 0.5 0.5 0.5" mass="0.12" diaginertia="0.00108 0.00094 0.00018"/>
           <joint name="right_front_knee_joint" pos="0 0 0" axis="0 1 0" range="-2.4 2.4" actuatorfrcrange="-3 3" damping="0.02" frictionloss="0.004"/>
           <geom size="0.011 0.1565" pos="-0.14 0 -0.07" quat="0.52575 0 -0.850639 0" type="cylinder" rgba="0.25 0.27 0.26 1"/>
+          <site name="right_front_closure_site" pos="-0.28 0 -0.14" size="0.01" rgba="1 0.2 0.2 1"/>
         </body>
       </body>
       <body name="right_rear_upper_link" pos="-0.14 -0.17 0.36">
@@ -60,6 +63,7 @@
           <body name="right_wheel_carrier" pos="0.28 0 -0.14">
             <inertial pos="0 -0.03 0" quat="0.707107 0.707107 0 0" mass="0.09" diaginertia="8e-05 8e-05 4e-05"/>
             <joint name="right_rear_ankle_joint" pos="0 0 0" axis="0 1 0" range="-2.8 2.8" actuatorfrcrange="-3 3" damping="0.02" frictionloss="0.004"/>
+            <site name="right_wheel_carrier_closure_site" pos="0 0 0" size="0.01" rgba="1 0.2 0.2 1"/>
             <geom size="0.025 0.06" pos="0 -0.03 0" quat="0.707105 0.707108 0 0" type="cylinder" rgba="0.72 0.72 0.7 1"/>
             <body name="right_wheel" pos="0 -0.06 0">
               <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.32" diaginertia="0.0016 0.00102 0.00102"/>
@@ -73,9 +77,16 @@
   </worldbody>
 
   <equality>
-    <connect name="left_front_fivebar_closure" body1="left_front_lower_link" body2="left_wheel_carrier" anchor="0 0.17 0.10" solref="0.006 1" solimp="0.95 0.99 0.001"/>
-    <connect name="right_front_fivebar_closure" body1="right_front_lower_link" body2="right_wheel_carrier" anchor="0 -0.17 0.10" solref="0.006 1" solimp="0.95 0.99 0.001"/>
+    <connect name="left_front_fivebar_closure" site1="left_front_closure_site" site2="left_wheel_carrier_closure_site" solref="0.006 1" solimp="0.95 0.99 0.001"/>
+    <connect name="right_front_fivebar_closure" site1="right_front_closure_site" site2="right_wheel_carrier_closure_site" solref="0.006 1" solimp="0.95 0.99 0.001"/>
   </equality>
+
+  <contact>
+    <exclude body1="left_front_lower_link" body2="left_wheel_carrier"/>
+    <exclude body1="left_front_lower_link" body2="left_rear_lower_link"/>
+    <exclude body1="right_front_lower_link" body2="right_wheel_carrier"/>
+    <exclude body1="right_front_lower_link" body2="right_rear_lower_link"/>
+  </contact>
 
   <actuator>
     <!-- Left side -->
@@ -115,8 +126,8 @@
     <actuatorfrc name="rw_motor_f" actuator="rw_motor" noise="1e-3"/>
 
     <!-- IMU (imu_main): pose/orientation + acceleration + angular velocity -->
-    <accelerometer name="imu_main_acc" site="imu"/>
-    <gyro name="imu_main_gyro" site="imu"/>
+    <accelerometer name="imu_main_acc" site="imu" noise="1e-2" cutoff="157"/>
+    <gyro name="imu_main_gyro" site="imu" noise="5e-4" cutoff="34.9"/>
     <framequat name="imu_main_quat" objtype="site" objname="imu"/>
   </sensor>
 </mujoco>

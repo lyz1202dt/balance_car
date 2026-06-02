@@ -22,6 +22,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(robot_interfaces REQUIRED)
 find_package(urdf REQUIRED)
+find_package(Eigen3 REQUIRED PATHS /usr/include/eigen3)
+find_package(autodiff REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -45,9 +47,12 @@ add_library(lqr_controller SHARED
 )
 
 target_include_directories(lqr_controller PUBLIC
+${EIGEN3_INCLUDE_DIRS}
 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 $<INSTALL_INTERFACE:include>
 )
+
+target_link_libraries(lqr_controller Eigen3::Eigen autodiff::autodiff)
 
 ament_target_dependencies(
   lqr_controller
