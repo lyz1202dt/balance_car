@@ -14,9 +14,25 @@ bool reachable(const double distance, const double link_a, const double link_b) 
     return distance > kEpsilon && distance <= link_a + link_b && distance >= std::abs(link_a - link_b);
 }
 
+bool is_finite_vector(const Eigen::Vector2d& vector) {
+    return std::isfinite(vector[0]) && std::isfinite(vector[1]);
+}
+
+bool solve_map(const Eigen::Matrix2d& matrix, const Eigen::Vector2d& input, Eigen::Vector2d& output) {
+    Eigen::FullPivLU<Eigen::Matrix2d> solver(matrix);
+    solver.setThreshold(1e-9);
+    if (!solver.isInvertible()) {
+        output.setZero();
+        return false;
+    }
+
+    output = solver.solve(input);
+    return is_finite_vector(output);
+}
+
 } // namespace
 
-Eigen::Matrix2d LegCalc::calc_jacobian(const Eigen::Vector2d& radian){
+Eigen::Matrix2d LegCalc::calc_jacobian(const Eigen::Vector2d& radian) const {
     autodiff::Vector2real q;
     q << radian[0], radian[1];
 
@@ -38,7 +54,7 @@ LegCalc::LegCalc(const double& l0, const double& l1, const double& l2): l0(l0),l
 
 }
 
-bool LegCalc::inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::Matrix<double, 2, 1> &rad) {
+bool LegCalc::inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::Matrix<double, 2, 1> &rad) const {
     const double leg_length = leg[0];
     const double leg_angle = leg[1];
     const double x = -leg_length * std::sin(leg_angle);
@@ -68,18 +84,44 @@ bool LegCalc::inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::M
     return true;
 }
 
+bool LegCalc::forward_velocity(
+    const Eigen::Vector2d &rad,const Eigen::Vector2d &joint_velocity,Eigen::Vector2d &leg_velocity) const {
+    if (!is_finite_vector(rad) || !is_finite_vector(joint_velocity)) {
+        leg_velocity.setZero();
+        return false;
+    }
+
+    leg_velocity = calc_jacobian(rad) * joint_velocity;
+    return is_finite_vector(leg_velocity);
+}
+
+bool LegCalc::inverse_velocity(
+    const Eigen::Vector2d &rad,const Eigen::Vector2d &leg_velocity,Eigen::Vector2d &joint_velocity) const {
+    if (!is_finite_vector(rad) || !is_finite_vector(leg_velocity)) {
+        joint_velocity.setZero();
+        return false;
+    }
+
+    return solve_map(calc_jacobian(rad), leg_velocity, joint_velocity);
+}
 
     //正动力学
-bool LegCalc::forward_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &torque,Eigen::Vector2d &effort) {
-    auto jacobian = calc_jacobian(rad);
-    effort= jacobian.transpose().fullPivLu().solve(torque);
-    return true;
+bool LegCalc::forward_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &torque,Eigen::Vector2d &effort) const {
+    if (!is_finite_vector(rad) || !is_finite_vector(torque)) {
+        effort.setZero();
+        return false;
+    }
+
+    return solve_map(calc_jacobian(rad).transpose(), torque, effort);
 }
 
     //逆动力学
-bool LegCalc::inverse_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &effort,Eigen::Vector2d &torque) {
-    const auto jacobian = calc_jacobian(rad);
-    torque= jacobian.transpose() * effort;
-    
-    return true;
+bool LegCalc::inverse_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &effort,Eigen::Vector2d &torque) const {
+    if (!is_finite_vector(rad) || !is_finite_vector(effort)) {
+        torque.setZero();
+        return false;
+    }
+
+    torque = calc_jacobian(rad).transpose() * effort;
+    return is_finite_vector(torque);
 }

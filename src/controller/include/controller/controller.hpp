@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tools/leg_calc.hpp"
+#include <Eigen/src/Core/Matrix.h>
 #include <array>
 #include <string>
 #include <vector>
@@ -38,7 +39,6 @@ private:
     static constexpr size_t kMotorCount = 6;
     static constexpr size_t kStateInterfacesPerMotor = 3;
     void update_motor_commands(const rclcpp::Time& time,const rclcpp::Duration& period);
-    bool load_default_pd_gains();
     void imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg);
     void imu_callback(const sensor_msgs::msg::Imu& msg);
     double clamp_torque(double value) const;
@@ -56,8 +56,6 @@ private:
     geometry_msgs::msg::Twist expected_velocity_;
 
     double torque_limit_{20.0};
-    std::array<double, kMotorCount> default_kp_{};
-    std::array<double, kMotorCount> default_kd_{};
     std::string imu_topic_{"/imu_imu_sensor/imu"};
     std::string imu_pose_topic_{"/imu_pose_sensor/pose"};
     bool use_mujoco_sim_chain_{false};
@@ -67,6 +65,11 @@ private:
     LegCalc leg;
     int state{1}; 
     Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
+    Eigen::Vector2d u;              //控制向量
+    double exp_x{0.0};
+
+    double vmc_kp{100.0};
+    double vmc_kd{5.0};
 };
 
 }  // namespace lqr_controller
