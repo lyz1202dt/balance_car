@@ -43,15 +43,8 @@ private:
         double effort{0.0};
     };
 
-    struct ImuSample {
-        std::array<double, 4> orientation{0.0, 0.0, 0.0, 1.0};
-        std::array<double, 3> angular_velocity{0.0, 0.0, 0.0};
-        std::array<double, 3> linear_acceleration{0.0, 0.0, 0.0};
-    };
-
     void read_state_interfaces();
     void update_motor_commands(const rclcpp::Time& time,const rclcpp::Duration& period);
-    void publish_robot_state();
     bool load_default_pd_gains();
     void imu_callback(const sensor_msgs::msg::Imu& msg);
     double clamp_torque(double value) const;
@@ -65,7 +58,7 @@ private:
     std::array<std::string, kMotorCount> motor_joint_names_{};
     std::array<MotorSample, kMotorCount> motor_state_{};
 
-    ImuSample imu_state_;
+    sensor_msgs::msg::Imu imu_state_;
     robot_interfaces::msg::RobotState robot_state_;
     robot_interfaces::msg::RobotTarget robot_target_;
     geometry_msgs::msg::Twist expected_velocity_;
@@ -79,7 +72,8 @@ private:
 
     //LQR自动控制相关的变量
     LegCalc leg;
-    int state{1};
+    int state{1}; 
+    Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
 };
 
 }  // namespace lqr_controller

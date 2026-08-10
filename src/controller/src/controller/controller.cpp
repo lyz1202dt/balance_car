@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <rclcpp/logging.hpp>
 #include <stdexcept>
 #include <string>
+
+#include <Eigen/Geometry>
 
 
 #include <pluginlib/class_list_macros.hpp>
@@ -150,6 +153,16 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     (void)period;
 
     Eigen::Vector2d rad = {0.0, 0.0};
+    Eigen::Vector<double,6> X;
+    //X<<
+    Eigen::Quaterniond q;
+    q.w()=imu_state_.orientation.w;
+    q.x()=imu_state_.orientation.x;
+    q.y()=imu_state_.orientation.y;
+    q.z()=imu_state_.orientation.z;
+    q.normalize();
+    Eigen::Vector3d rpy=q.toRotationMatrix().eulerAngles(0,1,2);
+    RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.lf,p=%.lf,y=%.lf)",rpy[0],rpy[1],rpy[2]);
 
 
     if (state == 0)        // 什么也不做
@@ -182,22 +195,7 @@ bool LQRController::load_default_pd_gains() {
 }
 
 void LQRController::imu_callback(const sensor_msgs::msg::Imu& msg) {
-    imu_state_.orientation = {
-        msg.orientation.x,
-        msg.orientation.y,
-        msg.orientation.z,
-        msg.orientation.w,
-    };
-    imu_state_.angular_velocity = {
-        msg.angular_velocity.x,
-        msg.angular_velocity.y,
-        msg.angular_velocity.z,
-    };
-    imu_state_.linear_acceleration = {
-        msg.linear_acceleration.x,
-        msg.linear_acceleration.y,
-        msg.linear_acceleration.z,
-    };
+    imu_state_=msg;
 }
 
 double LQRController::clamp_torque(const double value) const {
@@ -222,7 +220,7 @@ controller_interface::InterfaceConfiguration LQRController::command_interface_co
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
     for (const auto& name : motor_joint_names_) {
-        if (use_sim_time_parameter()) {
+        if (use_mujoco_sim_chain()) {
             const auto prefix = std::string(kReferencePrefix) + "/" + name;
             cfg.names.push_back(prefix + "/position");
             cfg.names.push_back(prefix + "/velocity");
