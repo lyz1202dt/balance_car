@@ -68,8 +68,12 @@ private:
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};
 
-    double vmc_kp{100.0};
-    double vmc_kd{5.0};
+    double vmc_kp{700.0};
+    double vmc_kd{20.0};
+    double leg_angle_diff_kp_{30.0};
+    double leg_angle_diff_kd_{1.5};
+    double wheel_diff_kp_{0.0};
+    double wheel_diff_kd_{0.05};
 };
 
 }  // namespace lqr_controller

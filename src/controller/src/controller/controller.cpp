@@ -74,6 +74,17 @@ Interface* find_interface(std::vector<Interface>& interfaces, const std::string&
 
 double clamp_unit(const double value) { return std::clamp(value, -1.0, 1.0); }
 
+double normalize_angle(const double value) {
+    double angle = value;
+    while (angle > M_PI) {
+        angle -= 2.0 * M_PI;
+    }
+    while (angle < -M_PI) {
+        angle += 2.0 * M_PI;
+    }
+    return angle;
+}
+
 double normalized_zyx_pitch(const Eigen::Quaterniond& q) {
     const Eigen::Matrix3d rotation = q.toRotationMatrix();
     return std::asin(clamp_unit(-rotation(2, 0)));
@@ -103,6 +114,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<std::string>("imu_topic", imu_topic_);
     auto_declare<std::string>("imu_pose_topic", imu_pose_topic_);
     auto_declare<double>("torque_limit", torque_limit_);
+    auto_declare<double>("leg_angle_diff_kp", leg_angle_diff_kp_);
+    auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
+    auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
+    auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
@@ -110,13 +125,21 @@ controller_interface::CallbackReturn LQRController::on_init() {
         for (const auto& param : params) {
             if (param.get_name() == "torque_limit") {
                 torque_limit_ = param.as_double();
+            } else if (param.get_name() == "leg_angle_diff_kp") {
+                leg_angle_diff_kp_ = param.as_double();
+            } else if (param.get_name() == "leg_angle_diff_kd") {
+                leg_angle_diff_kd_ = param.as_double();
+            } else if (param.get_name() == "wheel_diff_kp") {
+                wheel_diff_kp_ = param.as_double();
+            } else if (param.get_name() == "wheel_diff_kd") {
+                wheel_diff_kd_ = param.as_double();
             }
         }
         return result;
     });
 
-    K << -21.2083, -19.4842, -36.7996, -7.6400, 37.3930, 4.9429,
-        14.1713,  12.3267  ,  22.5044,  4.7825, 127.4392, 1.31;
+    K << -6.0, -5.6, -12.6, -2.5, 15.57, 1.87,
+         20.34, 18.07, 33.05, 7.01, 114.69, -0.09;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -128,6 +151,10 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
     imu_pose_topic_       = get_node()->get_parameter("imu_pose_topic").as_string();
     use_mujoco_sim_chain_ = use_sim_time_parameter();
     torque_limit_         = get_node()->get_parameter("torque_limit").as_double();
+    leg_angle_diff_kp_    = get_node()->get_parameter("leg_angle_diff_kp").as_double();
+    leg_angle_diff_kd_    = get_node()->get_parameter("leg_angle_diff_kd").as_double();
+    wheel_diff_kp_        = get_node()->get_parameter("wheel_diff_kp").as_double();
+    wheel_diff_kd_        = get_node()->get_parameter("wheel_diff_kd").as_double();
 
     robot_exp_vel = get_node()->create_subscription<geometry_msgs::msg::Twist>(
         kCmdVelTopic, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
@@ -227,6 +254,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     const double pitch = normalized_zyx_pitch(q);
     // RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
 
+    //提取等效摆的角度和长度
     Eigen::Vector2d left_joint_pos(robot_state_.l1.rad, robot_state_.l2.rad), left_leg_pos(0.0, 0.0);
     const bool left_leg_ok = leg.forward_kinematics(left_joint_pos, left_leg_pos);
     Eigen::Vector2d left_joint_vel(robot_state_.l1.omega, robot_state_.l2.omega), left_leg_vel(0.0, 0.0);
@@ -242,37 +270,44 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     }
 
     // 准备填写状态空间方程
-    double x     = (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
-    double dx    = (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
-    double theta = (pitch + right_leg_pos[1]);
-    if (theta > M_PI)
-        theta -= 2.0 * M_PI;
-    else if (theta < -M_PI)
-        theta += 2.0 * M_PI;
+    const double leg_angle     = 0.5 * (left_leg_pos[1] + right_leg_pos[1]);
+    const double leg_angle_vel = 0.5 * (left_leg_vel[1] + right_leg_vel[1]);
+    double x                   = -0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
+    double dx                  = -0.5 * (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
+    double theta               = normalize_angle(pitch + leg_angle);
+    double dtheta              = imu_state_.angular_velocity.y + leg_angle_vel; // 将平均腿摆速度加入解算
+    double phi                 = -pitch;
+    double dphi                = -imu_state_.angular_velocity.y;
 
-    double dtheta = (imu_state_.angular_velocity.y + right_leg_vel[1]); // 将速度加入解算
-    double phi    = -pitch;
-    double dphi   = -imu_state_.angular_velocity.y;
-
-    Eigen::Vector<double, 6> X, exp_X;                                    // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
+    Eigen::Vector<double, 6> X, exp_X;                                  // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
     exp_X[0] = exp_x;
 
-    X << x, dx, theta, dtheta, phi, dphi;                                 // 填写当前状态向量
-    u = K * (X-exp_X);                                                  // 计算得到控制量u
+    X << x, dx, theta, dtheta, phi, dphi;                               // 填写当前状态向量
+    u = 0.2*K * (exp_X-X);                                                // 计算得到控制量u
+
+    //u.setZero();
 
     // 腿长VMC部分，计算关节为了维持当前腿长所需要施加的力矩
     double left_leg_dis_vmc_T  = vmc_kp * (0.27 - left_leg_pos[0]) - vmc_kd * left_joint_vel[0];
     double right_leg_dis_vmc_T = vmc_kp * (0.27 - right_leg_pos[0]) - vmc_kd * right_joint_vel[0];
+    const double leg_angle_diff = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
+    const double leg_angle_diff_vel = left_leg_vel[1] - right_leg_vel[1];
+    const double leg_angle_sync_torque = -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel;
+    const double left_leg_angle_torque = u[1] + leg_angle_sync_torque;
+    const double right_leg_angle_torque = u[1] - leg_angle_sync_torque;
+    const double wheel_diff = normalize_angle(robot_state_.lw.rad - robot_state_.rw.rad);
+    const double wheel_diff_vel = robot_state_.lw.omega - robot_state_.rw.omega;
+    const double wheel_sync_torque = -wheel_diff_kp_ * wheel_diff - wheel_diff_kd_ * wheel_diff_vel;
 
     Eigen::Vector2d left_torque, right_torque;
-    leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, u[1]), left_torque);
-    leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, u[1]), right_torque);
+    leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, left_leg_angle_torque), left_torque);
+    leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, right_leg_angle_torque), right_torque);
 
 
 
     // 状态切换安全检测，倾倒时切换位控
-    if (pitch > 0.1 || pitch < -0.1) {
+    if (pitch > 1.0 || pitch < -1.0) {
         state = 1;
     } else {
         state = 2;
@@ -286,7 +321,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     } else if (state == 1) // 位控控制
     {
         Eigen::Vector2d rad = {0.0, 0.0};
-        //if (leg.inverse_kinematics({0.27, 0.2}, rad)) {
+        // if (leg.inverse_kinematics({0.27, 0.2}, rad)) {
         if (leg.inverse_kinematics({0.27, 0.0}, rad)) {
             robot_target_.l1.rad = robot_target_.r1.rad = static_cast<float>(rad[0]);
             robot_target_.l2.rad = robot_target_.r2.rad = static_cast<float>(rad[1]);
@@ -297,19 +332,21 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         // robot_target_.rw.omega=10.0f;
     } else if (state == 2) // 平衡控制
     {
-        robot_target_.l1.torque = std::clamp<double>(left_torque[0],-5.0,5.0);
-        robot_target_.l2.torque = std::clamp<double>(left_torque[1],-5.0,5.0);
-        robot_target_.r1.torque = std::clamp<double>(right_torque[0],-5.0,5.0);
-        robot_target_.r2.torque = std::clamp<double>(right_torque[1],-5.0,5.0);
-        robot_target_.lw.torque = std::clamp<double>(u[0],-1.0f,1.0f);
-        robot_target_.rw.torque = std::clamp<double>(u[0],-1.0f,1.0f);
+        robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
+        robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
+        robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
+        robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
+        robot_target_.lw.torque = std::clamp<double>(u[0] + wheel_sync_torque, -3.0, 3.0);
+        robot_target_.rw.torque = std::clamp<double>(u[0] - wheel_sync_torque, -3.0, 3.0);
     } else if (state == 3) // 离地状态
     {
     }
 
     RCLCPP_INFO_THROTTLE(
-        get_node()->get_logger(), *get_node()->get_clock(), 100, "X=(%.4f,%.4f,%.4f,%.4f,%.4f,%.4f)\nu:T=%.4f,Tp=%.4f\nstate=%d,(left=%.4f,right=%.4f)", X[0],
-        X[1], X[2], X[3], X[4], X[5], u[0],u[1],state, left_leg_dis_vmc_T, right_leg_dis_vmc_T);
+        get_node()->get_logger(), *get_node()->get_clock(), 100,
+        "X=(%.4f,%.4f,%.4f,%.4f,%.4f,%.4f)\nu:T=%.4f,Tp=%.4f\nstate=%d,(left=%.4f,right=%.4f)\ndiff:leg=%.4f,dleg=%.4f,wheel=%.4f,dwheel=%.4f,sync_leg=%.4f,sync_wheel=%.4f\nr1=%.4f,r2=%.4f",
+        X[0], X[1], X[2], X[3], X[4], X[5], u[0], u[1], state, left_leg_dis_vmc_T, right_leg_dis_vmc_T, leg_angle_diff,
+        leg_angle_diff_vel, wheel_diff, wheel_diff_vel, leg_angle_sync_torque, wheel_sync_torque, right_torque[0], right_torque[1]);
 }
 
 void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {
