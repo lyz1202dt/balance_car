@@ -17,4 +17,3 @@ lqr_controller:
   ros__parameters:
     use_sim_time: true
     imu_topic: /imu_imu_sensor/imu
-    torque_limit: 20.0
