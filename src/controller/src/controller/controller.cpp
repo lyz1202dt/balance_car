@@ -1,10 +1,12 @@
 #include <controller/controller.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <rclcpp/logging.hpp>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <Eigen/Geometry>
 
@@ -31,10 +33,14 @@ constexpr std::array<const char*, kMotorCount> kMotorJointNames = {
     "left_front_hip_joint",  "left_rear_hip_joint",  "left_wheel_joint",
     "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
 };
-
-size_t motor_target_index(const size_t motor_index, const size_t interface_index) {
-    return motor_index * kTargetInterfacesPerMotor + interface_index;
-}
+constexpr std::array<const char*, 3> kStateInterfaceNames = {"position", "velocity", "effort"};
+constexpr std::array<const char*, kTargetInterfacesPerMotor> kTargetInterfaceNames = {
+    "position",
+    "velocity",
+    "effort",
+    "kp",
+    "kd",
+};
 
 robot_interfaces::msg::MotorState& motor_state_at(robot_interfaces::msg::RobotState& msg, const size_t index) {
     switch (index) {
@@ -56,6 +62,28 @@ robot_interfaces::msg::MotorTarget& target_at(robot_interfaces::msg::RobotTarget
     case 4: return msg.r2;
     default: return msg.rw;
     }
+}
+
+template <typename Interface>
+Interface* find_interface(std::vector<Interface>& interfaces, const std::string& name) {
+    const auto interface = std::find_if(
+        interfaces.begin(), interfaces.end(), [&name](const auto& item) { return item.get_name() == name; });
+    if (interface == interfaces.end()) {
+        return nullptr;
+    }
+    return &(*interface);
+}
+
+std::string motor_state_interface_name(const size_t motor_index, const size_t interface_index) {
+    return std::string(kMotorJointNames[motor_index]) + "/" + kStateInterfaceNames[interface_index];
+}
+
+std::string motor_command_interface_name(const size_t motor_index, const size_t interface_index, const bool use_mujoco_chain) {
+    const auto joint_interface = std::string(kMotorJointNames[motor_index]) + "/" + kTargetInterfaceNames[interface_index];
+    if (use_mujoco_chain) {
+        return std::string(kReferencePrefix) + "/" + joint_interface;
+    }
+    return joint_interface;
 }
 
 } // namespace
@@ -131,23 +159,44 @@ controller_interface::CallbackReturn LQRController::on_deactivate(const rclcpp_l
 
 controller_interface::return_type LQRController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     for (size_t motor_index = 0; motor_index < kMotorCount; ++motor_index) {
-        const size_t state_index = motor_index * kStateInterfacesPerMotor;
+        const auto position_interface = find_interface(state_interfaces_, motor_state_interface_name(motor_index, 0));
+        const auto velocity_interface = find_interface(state_interfaces_, motor_state_interface_name(motor_index, 1));
+        const auto effort_interface   = find_interface(state_interfaces_, motor_state_interface_name(motor_index, 2));
+        if (position_interface == nullptr || velocity_interface == nullptr || effort_interface == nullptr) {
+            RCLCPP_ERROR_THROTTLE(
+                get_node()->get_logger(), *get_node()->get_clock(), 1000, "Missing state interfaces for %s",
+                kMotorJointNames[motor_index]);
+            return controller_interface::return_type::ERROR;
+        }
+
         auto& state = motor_state_at(robot_state_, motor_index);
-        state.rad = static_cast<float>(state_interfaces_[state_index].get_value());
-        state.omega = static_cast<float>(state_interfaces_[state_index + 1].get_value());
-        state.torque = static_cast<float>(state_interfaces_[state_index + 2].get_value());
+        state.rad    = static_cast<float>(position_interface->get_value());
+        state.omega  = static_cast<float>(velocity_interface->get_value());
+        state.torque = static_cast<float>(effort_interface->get_value());
     }
 
     update_motor_commands(time, period);
 
     for (size_t i = 0; i < kMotorCount; ++i) {
-        const auto& target         = target_at(robot_target_, i);
-        const size_t command_index = motor_target_index(i, 0);
-        command_interfaces_[command_index].set_value(static_cast<double>(target.rad));
-        command_interfaces_[command_index + 1].set_value(static_cast<double>(target.omega));
-        command_interfaces_[command_index + 2].set_value(clamp_torque(static_cast<double>(target.torque)));
-        command_interfaces_[command_index + 3].set_value(static_cast<double>(target.kp));
-        command_interfaces_[command_index + 4].set_value(static_cast<double>(target.kd));
+        const auto position_interface = find_interface(command_interfaces_, motor_command_interface_name(i, 0, use_mujoco_sim_chain()));
+        const auto velocity_interface = find_interface(command_interfaces_, motor_command_interface_name(i, 1, use_mujoco_sim_chain()));
+        const auto effort_interface   = find_interface(command_interfaces_, motor_command_interface_name(i, 2, use_mujoco_sim_chain()));
+        const auto kp_interface       = find_interface(command_interfaces_, motor_command_interface_name(i, 3, use_mujoco_sim_chain()));
+        const auto kd_interface       = find_interface(command_interfaces_, motor_command_interface_name(i, 4, use_mujoco_sim_chain()));
+        if (position_interface == nullptr || velocity_interface == nullptr || effort_interface == nullptr || kp_interface == nullptr ||
+            kd_interface == nullptr) {
+            RCLCPP_ERROR_THROTTLE(
+                get_node()->get_logger(), *get_node()->get_clock(), 1000, "Missing command interfaces for %s",
+                kMotorJointNames[i]);
+            return controller_interface::return_type::ERROR;
+        }
+
+        const auto& target = target_at(robot_target_, i);
+        position_interface->set_value(static_cast<double>(target.rad));
+        velocity_interface->set_value(static_cast<double>(target.omega));
+        effort_interface->set_value(clamp_torque(static_cast<double>(target.torque)));
+        kp_interface->set_value(static_cast<double>(target.kp));
+        kd_interface->set_value(static_cast<double>(target.kd));
     }
     return controller_interface::return_type::OK;
 }
@@ -171,11 +220,15 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
 
     Eigen::Vector2d left_joint_pos(robot_state_.l1.rad,robot_state_.l2.rad),left_leg_state(0.0,0.0);
-    leg.forward_kinematics(left_joint_pos, left_leg_state);
+    const bool left_leg_ok = leg.forward_kinematics(left_joint_pos, left_leg_state);
     Eigen::Vector2d right_joint_pos(robot_state_.r1.rad,robot_state_.r2.rad),right_leg_state(0.0,0.0);
-    leg.forward_kinematics(right_joint_pos, right_leg_state);
+    const bool right_leg_ok = leg.forward_kinematics(right_joint_pos, right_leg_state);
 
-    RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"left_leg=(%.4f,%.4f),right_leg=(%.4f,%.4f)",left_leg_state[0],left_leg_state[1],right_leg_state[0],right_leg_state[1]);
+    RCLCPP_INFO_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 100,
+        "left_leg=%s(%.4f,%.4f),right_leg=%s(%.4f,%.4f),left_joint=(%.4f,%.4f),right_joint=(%.4f,%.4f)",
+        left_leg_ok ? "ok" : "fail", left_leg_state[0], left_leg_state[1], right_leg_ok ? "ok" : "fail", right_leg_state[0],
+        right_leg_state[1], left_joint_pos[0], left_joint_pos[1], right_joint_pos[0], right_joint_pos[1]);
 
     if (state == 0)        // 什么也不做
     {

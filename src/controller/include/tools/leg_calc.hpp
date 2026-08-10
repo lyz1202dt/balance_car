@@ -4,6 +4,7 @@
 #include <cmath>
 #include <Eigen/Dense>
 #include <stdexcept>
+#include <type_traits>
 #include <autodiff/forward/real.hpp>
 #include <autodiff/forward/real/eigen.hpp>
 
@@ -20,26 +21,44 @@ public:
         using std::sin;
         using std::sqrt;
 
-        const auto l0_scalar = static_cast<Scalar>(l0);
-        const auto l1_scalar = static_cast<Scalar>(l1);
-        const auto l2_scalar = static_cast<Scalar>(l2);
+        leg.setZero();
+        if constexpr (std::is_floating_point_v<Scalar>) {
+            if (!std::isfinite(rad[0]) || !std::isfinite(rad[1])) {
+                return false;
+            }
+        }
 
-        const auto front_elbow = Vector2(l0_scalar + l1_scalar * cos(rad[0]), l1_scalar * sin(rad[0]));
-        const auto rear_elbow  = Vector2(-l0_scalar + l1_scalar * cos(rad[1]), l1_scalar * sin(rad[1]));
+        const Scalar l0_scalar = static_cast<Scalar>(l0);
+        const Scalar l1_scalar = static_cast<Scalar>(l1);
+        const Scalar l2_scalar = static_cast<Scalar>(l2);
+        const Scalar epsilon = static_cast<Scalar>(1e-9);
 
-        const auto delta = rear_elbow - front_elbow;
-        const auto distance = sqrt(delta.dot(delta));
-        if (distance < static_cast<Scalar>(1e-6) || distance > static_cast<Scalar>(2.0) * l2_scalar) {
+        const Vector2 front_elbow(l0_scalar + l1_scalar * cos(rad[0]), l1_scalar * sin(rad[0]));
+        const Vector2 rear_elbow(-l0_scalar + l1_scalar * cos(rad[1]), l1_scalar * sin(rad[1]));
+
+        const Vector2 delta = rear_elbow - front_elbow;
+        const Scalar distance_sq = delta.dot(delta);
+        if (!(distance_sq > epsilon * epsilon)) {
             return false;
         }
 
-        const auto mid = static_cast<Scalar>(0.5) * (front_elbow + rear_elbow);
-        const auto half_delta = static_cast<Scalar>(0.5) * delta;
-        const auto height = sqrt(l2_scalar * l2_scalar - half_delta.dot(half_delta));
-        const auto normal = Vector2(-delta[1], delta[0]) / distance;
+        const Scalar distance = sqrt(distance_sq);
+        if (!(distance <= static_cast<Scalar>(2.0) * l2_scalar + epsilon)) {
+            return false;
+        }
 
-        const auto candidate_a = mid + height * normal;
-        const auto candidate_b = mid - height * normal;
+        const Vector2 mid = static_cast<Scalar>(0.5) * (front_elbow + rear_elbow);
+        const Vector2 half_delta = static_cast<Scalar>(0.5) * delta;
+        const Scalar height_sq = l2_scalar * l2_scalar - half_delta.dot(half_delta);
+        if (height_sq < -epsilon) {
+            return false;
+        }
+
+        const Scalar height = sqrt(height_sq > static_cast<Scalar>(0.0) ? height_sq : static_cast<Scalar>(0.0));
+        const Vector2 normal = Vector2(-delta[1], delta[0]) / distance;
+
+        const Vector2 candidate_a = mid + height * normal;
+        const Vector2 candidate_b = mid - height * normal;
         Vector2 wheel = candidate_a;
         if (candidate_b[1] > candidate_a[1]) {
             wheel = candidate_b;
