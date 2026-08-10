@@ -11,11 +11,11 @@ class LegCalc{
 public:
     LegCalc(const double &l0,const double &l1,const double &l2);
 
-    //正运动学，输入(q1,q2)，输出(l,fai)
+    //正运动学，输入(前髋关节角, 后髋关节角)，输出(轮轴到髋中心的距离, 角度)
     template <typename Scalar>
-    bool forward_kinematics(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> pos) const {
+    bool forward_kinematics(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> &pos) const {
         using Vector2 = Eigen::Matrix<Scalar, 2, 1>;
-        using std::abs;
+        using std::atan2;
         using std::cos;
         using std::sin;
         using std::sqrt;
@@ -24,29 +24,33 @@ public:
         const auto l1_scalar = static_cast<Scalar>(l1);
         const auto l2_scalar = static_cast<Scalar>(l2);
 
-        const auto p1 = Vector2(l0_scalar + l1_scalar * cos(rad[0]), l1_scalar * sin(rad[0]));
-        const auto p2 = Vector2(-l0_scalar + l1_scalar * cos(rad[1]), l1_scalar * sin(rad[1]));
+        const auto front_elbow = Vector2(l0_scalar + l1_scalar * cos(rad[0]), l1_scalar * sin(rad[0]));
+        const auto rear_elbow  = Vector2(-l0_scalar + l1_scalar * cos(rad[1]), l1_scalar * sin(rad[1]));
 
-        const auto delta_x = p2[0] - p1[0];
-        if (abs(delta_x) < static_cast<Scalar>(1e-6)) {
+        const auto delta = rear_elbow - front_elbow;
+        const auto distance = sqrt(delta.dot(delta));
+        if (distance < static_cast<Scalar>(1e-6) || distance > static_cast<Scalar>(2.0) * l2_scalar) {
             return false;
         }
 
-        const auto k_ = (p2[1] - p1[1]) / delta_x;
-        const auto k  = -static_cast<Scalar>(1.0) / k_;
-        auto dir      = Vector2(static_cast<Scalar>(1.0), k);
-        const auto direction_sign = dir[1] < static_cast<Scalar>(0.0)
-            ? static_cast<Scalar>(-1.0)
-            : static_cast<Scalar>(1.0);
-        dir = direction_sign * dir / sqrt(dir.dot(dir));
+        const auto mid = static_cast<Scalar>(0.5) * (front_elbow + rear_elbow);
+        const auto half_delta = static_cast<Scalar>(0.5) * delta;
+        const auto height = sqrt(l2_scalar * l2_scalar - half_delta.dot(half_delta));
+        const auto normal = Vector2(-delta[1], delta[0]) / distance;
 
-        const auto delta  = p2 - p1;
-        const auto length = sqrt(l2_scalar * l2_scalar - delta.dot(delta));
-        pos= dir * length + static_cast<Scalar>(0.5) * (p1 + p2);
+        const auto candidate_a = mid + height * normal;
+        const auto candidate_b = mid - height * normal;
+        Vector2 wheel = candidate_a;
+        if (candidate_b[1] > candidate_a[1]) {
+            wheel = candidate_b;
+        }
+
+        pos[0] = sqrt(wheel.dot(wheel));
+        pos[1] = atan2(wheel[1], wheel[0]);
         return true;
     }
 
-    //逆运动学，输入{l,fai}，输出(q1,q2)
+    //逆运动学，输入{轮轴到髋中心的距离, 角度}，输出{前髋关节角, 后髋关节角}
     bool inverse_kinematics(const Eigen::Matrix<double, 2, 1> &pos,Eigen::Matrix<double, 2, 1> &rad);
 
     //正动力学，输入{t1,t2}，输出(F,T)

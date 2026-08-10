@@ -21,6 +21,11 @@ constexpr const char* kReferencePrefix     = "mujoco_sim_controller";
 constexpr const char* kStateTopic          = "robot_state";
 constexpr const char* kTargetTopic         = "robot_target";
 constexpr const char* kCmdVelTopic         = "cmd_vel";
+constexpr double kHipHalfDistance          = 0.11;
+constexpr double kUpperLinkLength          = 0.1844;
+constexpr double kLowerLinkLength          = 0.3130;
+constexpr double kStandLegLength           = 0.27;
+constexpr double kStandLegAngle            = M_PI / 2.0;
 
 size_t motor_target_index(const size_t motor_index, const size_t interface_index) {
     return motor_index * kTargetInterfacesPerMotor + interface_index;
@@ -50,10 +55,8 @@ robot_interfaces::msg::MotorTarget& target_at(robot_interfaces::msg::RobotTarget
 
 } // namespace
 
-LQRController::LQRController() :leg(0.14,0.1844,0.3130)
-{
-
-}
+LQRController::LQRController()
+    : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {}
 
 controller_interface::CallbackReturn LQRController::on_init() {
     motor_joint_names_ = {
@@ -128,7 +131,7 @@ controller_interface::return_type LQRController::update(const rclcpp::Time& time
         motor_state_[motor_index].effort   = state_interfaces_[state_index + 2].get_value();
     }
 
-    update_motor_commands(time,period);
+    update_motor_commands(time, period);
 
     for (size_t i = 0; i < kMotorCount; ++i) {
         const auto& target         = target_at(robot_target_, i);
@@ -142,12 +145,25 @@ controller_interface::return_type LQRController::update(const rclcpp::Time& time
     return controller_interface::return_type::OK;
 }
 
-void LQRController::update_motor_commands(const rclcpp::Time& time,const rclcpp::Duration& period) {
-    Eigen::Vector2d rad={0.0,0.0};
-    leg.inverse_kinematics({0.0,0.17}, rad);
-    robot_target_.l1.rad=robot_target_.r1.rad=rad[0];
-    robot_target_.l2.rad=robot_target_.r2.rad=rad[1];
+void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp::Duration& period) {
+    (void)time;
+    (void)period;
 
+    Eigen::Vector2d rad = {0.0, 0.0};
+
+
+    if (state == 0)        // 什么也不做
+    {
+
+    } else if (state == 1) // 固定腿长位控下的平衡控制
+    {
+        if (leg.inverse_kinematics({kStandLegLength, kStandLegAngle}, rad)) {
+            robot_target_.l1.rad = robot_target_.r1.rad = static_cast<float>(rad[0]);
+            robot_target_.l2.rad = robot_target_.r2.rad = static_cast<float>(rad[1]);
+        }
+    } else if (state == 2) // 离地状态
+    {
+    }
 }
 
 bool LQRController::load_default_pd_gains() {

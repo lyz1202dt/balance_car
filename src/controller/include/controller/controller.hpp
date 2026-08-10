@@ -79,6 +79,7 @@ private:
 
     //LQR自动控制相关的变量
     LegCalc leg;
+    int state{1};
 };
 
 }  // namespace lqr_controller
