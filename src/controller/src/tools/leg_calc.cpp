@@ -20,15 +20,15 @@ Eigen::Matrix2d LegCalc::calc_jacobian(const Eigen::Vector2d& radian){
     autodiff::Vector2real q;
     q << radian[0], radian[1];
 
-    const auto position_func = [this](const autodiff::Vector2real& q_auto) {
+    const auto leg_state_func = [this](const autodiff::Vector2real& q_auto) {
         autodiff::Vector2real out;
         forward_kinematics(q_auto,out);
         return out;
     };
 
-    autodiff::Vector2real position;
+    autodiff::Vector2real leg_state;
     Eigen::Matrix2d jacobian;
-    autodiff::jacobian(position_func, autodiff::wrt(q), autodiff::at(q), position, jacobian);
+    autodiff::jacobian(leg_state_func, autodiff::wrt(q), autodiff::at(q), leg_state, jacobian);
 
     return jacobian;
 }
@@ -38,9 +38,11 @@ LegCalc::LegCalc(const double& l0, const double& l1, const double& l2): l0(l0),l
 
 }
 
-bool LegCalc::inverse_kinematics(const Eigen::Matrix<double, 2, 1> &pos,Eigen::Matrix<double, 2, 1> &rad) {
-    const double x = pos[0] * std::cos(pos[1]);
-    const double y = pos[0] * std::sin(pos[1]);
+bool LegCalc::inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::Matrix<double, 2, 1> &rad) {
+    const double leg_length = leg[0];
+    const double leg_angle = leg[1];
+    const double x = -leg_length * std::sin(leg_angle);
+    const double y = leg_length * std::cos(leg_angle);
 
     const double front_dx = x - l0;
     const double front_dy = y;

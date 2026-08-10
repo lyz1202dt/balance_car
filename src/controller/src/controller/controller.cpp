@@ -27,8 +27,10 @@ constexpr const char* kCmdVelTopic         = "cmd_vel";
 constexpr double kHipHalfDistance          = 0.11;
 constexpr double kUpperLinkLength          = 0.1844;
 constexpr double kLowerLinkLength          = 0.3130;
-constexpr double kStandLegLength           = 0.27;
-constexpr double kStandLegAngle            = M_PI / 2.0;
+constexpr std::array<const char*, kMotorCount> kMotorJointNames = {
+    "left_front_hip_joint",  "left_rear_hip_joint",  "left_wheel_joint",
+    "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
+};
 
 size_t motor_target_index(const size_t motor_index, const size_t interface_index) {
     return motor_index * kTargetInterfacesPerMotor + interface_index;
@@ -59,16 +61,14 @@ robot_interfaces::msg::MotorTarget& target_at(robot_interfaces::msg::RobotTarget
 } // namespace
 
 LQRController::LQRController()
-    : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {}
+    : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {
+    imu_state_.orientation.w = 1.0;
+}
 
 controller_interface::CallbackReturn LQRController::on_init() {
-    motor_joint_names_ = {
-        "left_front_hip_joint",  "left_rear_hip_joint",  "left_wheel_joint",
-        "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
-    };
-
     auto node = get_node();
     auto_declare<std::string>("imu_topic", imu_topic_);
+    auto_declare<std::string>("imu_pose_topic", imu_pose_topic_);
     auto_declare<double>("torque_limit", torque_limit_);
     auto_declare<std::vector<double>>("default_kp", std::vector<double>(kMotorCount, 0.0));
     auto_declare<std::vector<double>>("default_kd", std::vector<double>(kMotorCount, 0.0));
@@ -91,6 +91,7 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
     (void)previous_state;
 
     imu_topic_            = get_node()->get_parameter("imu_topic").as_string();
+    imu_pose_topic_       = get_node()->get_parameter("imu_pose_topic").as_string();
     use_mujoco_sim_chain_ = use_sim_time_parameter();
     torque_limit_         = get_node()->get_parameter("torque_limit").as_double();
     if (!load_default_pd_gains()) {
@@ -99,6 +100,8 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
 
     robot_exp_vel = get_node()->create_subscription<geometry_msgs::msg::Twist>(
         kCmdVelTopic, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
+    imu_pose_subscriber_ = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
+        imu_pose_topic_, rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::PoseStamped& msg) { imu_pose_callback(msg); });
     imu_subscriber_ = get_node()->create_subscription<sensor_msgs::msg::Imu>(
         imu_topic_, rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Imu& msg) { imu_callback(msg); });
 
@@ -128,10 +131,11 @@ controller_interface::CallbackReturn LQRController::on_deactivate(const rclcpp_l
 
 controller_interface::return_type LQRController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     for (size_t motor_index = 0; motor_index < kMotorCount; ++motor_index) {
-        const size_t state_index           = motor_index * kStateInterfacesPerMotor;
-        motor_state_[motor_index].position = state_interfaces_[state_index].get_value();
-        motor_state_[motor_index].velocity = state_interfaces_[state_index + 1].get_value();
-        motor_state_[motor_index].effort   = state_interfaces_[state_index + 2].get_value();
+        const size_t state_index = motor_index * kStateInterfacesPerMotor;
+        auto& state = motor_state_at(robot_state_, motor_index);
+        state.rad = static_cast<float>(state_interfaces_[state_index].get_value());
+        state.omega = static_cast<float>(state_interfaces_[state_index + 1].get_value());
+        state.torque = static_cast<float>(state_interfaces_[state_index + 2].get_value());
     }
 
     update_motor_commands(time, period);
@@ -154,26 +158,36 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
     Eigen::Vector2d rad = {0.0, 0.0};
     Eigen::Vector<double,6> X;
-    //X<<
+    //X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
+
+    //提取欧拉姿态角
     Eigen::Quaterniond q;
     q.w()=imu_state_.orientation.w;
     q.x()=imu_state_.orientation.x;
     q.y()=imu_state_.orientation.y;
     q.z()=imu_state_.orientation.z;
     q.normalize();
-    Eigen::Vector3d rpy=q.toRotationMatrix().eulerAngles(0,1,2);
-    RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.lf,p=%.lf,y=%.lf)",rpy[0],rpy[1],rpy[2]);
+    Eigen::Vector3d rpy=q.toRotationMatrix().eulerAngles(2,1,0);
+    RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
 
+    Eigen::Vector2d left_joint_pos(robot_state_.l1.rad,robot_state_.l2.rad),left_leg_state(0.0,0.0);
+    leg.forward_kinematics(left_joint_pos, left_leg_state);
+    Eigen::Vector2d right_joint_pos(robot_state_.r1.rad,robot_state_.r2.rad),right_leg_state(0.0,0.0);
+    leg.forward_kinematics(right_joint_pos, right_leg_state);
+
+    RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"left_leg=(%.4f,%.4f),right_leg=(%.4f,%.4f)",left_leg_state[0],left_leg_state[1],right_leg_state[0],right_leg_state[1]);
 
     if (state == 0)        // 什么也不做
     {
 
     } else if (state == 1) // 固定腿长位控下的平衡控制
     {
-        if (leg.inverse_kinematics({kStandLegLength, kStandLegAngle}, rad)) {
+        if (leg.inverse_kinematics({0.27, 0.3}, rad)) {
             robot_target_.l1.rad = robot_target_.r1.rad = static_cast<float>(rad[0]);
             robot_target_.l2.rad = robot_target_.r2.rad = static_cast<float>(rad[1]);
         }
+        robot_target_.lw.omega=10.0f;
+        robot_target_.rw.omega=10.0f;
     } else if (state == 2) // 离地状态
     {
     }
@@ -194,8 +208,16 @@ bool LQRController::load_default_pd_gains() {
     return true;
 }
 
+void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {
+    imu_state_.orientation.x = msg.pose.orientation.x;
+    imu_state_.orientation.y = msg.pose.orientation.y;
+    imu_state_.orientation.z = msg.pose.orientation.z;
+    imu_state_.orientation.w = msg.pose.orientation.w;
+}
+
 void LQRController::imu_callback(const sensor_msgs::msg::Imu& msg) {
-    imu_state_=msg;
+    imu_state_.angular_velocity = msg.angular_velocity;
+    imu_state_.linear_acceleration = msg.linear_acceleration;
 }
 
 double LQRController::clamp_torque(const double value) const {
@@ -219,7 +241,8 @@ controller_interface::InterfaceConfiguration LQRController::command_interface_co
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
-    for (const auto& name : motor_joint_names_) {
+    for (const auto& joint_name : kMotorJointNames) {
+        const auto name = std::string(joint_name);
         if (use_mujoco_sim_chain()) {
             const auto prefix = std::string(kReferencePrefix) + "/" + name;
             cfg.names.push_back(prefix + "/position");
@@ -242,7 +265,8 @@ controller_interface::InterfaceConfiguration LQRController::state_interface_conf
     controller_interface::InterfaceConfiguration cfg;
     cfg.type = controller_interface::interface_configuration_type::INDIVIDUAL;
 
-    for (const auto& name : motor_joint_names_) {
+    for (const auto& joint_name : kMotorJointNames) {
+        const auto name = std::string(joint_name);
         cfg.names.push_back(name + "/position");
         cfg.names.push_back(name + "/velocity");
         cfg.names.push_back(name + "/effort");

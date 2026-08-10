@@ -1,3 +1,0 @@
-[INFO] [1780426681.617815849] [spawner_lqr_controller]: waiting for service /controller_manager/list_controllers to become available...
-[INFO] [1780426681.878846498] [spawner_lqr_controller]: [94mLoaded [1mlqr_controller[0m
-[INFO] [1780426681.912373736] [spawner_lqr_controller]: [92mConfigured and activated [1mlqr_controller[0m

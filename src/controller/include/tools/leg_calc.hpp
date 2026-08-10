@@ -11,9 +11,9 @@ class LegCalc{
 public:
     LegCalc(const double &l0,const double &l1,const double &l2);
 
-    //正运动学，输入(前髋关节角, 后髋关节角)，输出(轮轴到髋中心的距离, 角度)
+    //正运动学，输入{前髋关节角, 后髋关节角}，输出{腿长, 腿角度}，腿竖直向下为0
     template <typename Scalar>
-    bool forward_kinematics(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> &pos) const {
+    bool forward_kinematics(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> &leg) const {
         using Vector2 = Eigen::Matrix<Scalar, 2, 1>;
         using std::atan2;
         using std::cos;
@@ -45,13 +45,13 @@ public:
             wheel = candidate_b;
         }
 
-        pos[0] = sqrt(wheel.dot(wheel));
-        pos[1] = atan2(wheel[1], wheel[0]);
+        leg[0] = sqrt(wheel.dot(wheel));
+        leg[1] = atan2(-wheel[0], wheel[1]);
         return true;
     }
 
-    //逆运动学，输入{轮轴到髋中心的距离, 角度}，输出{前髋关节角, 后髋关节角}
-    bool inverse_kinematics(const Eigen::Matrix<double, 2, 1> &pos,Eigen::Matrix<double, 2, 1> &rad);
+    //逆运动学，输入{腿长, 腿角度}，输出{前髋关节角, 后髋关节角}，腿竖直向下为0
+    bool inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::Matrix<double, 2, 1> &rad);
 
     //正动力学，输入{t1,t2}，输出(F,T)
     bool forward_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &torque,Eigen::Vector2d &effort);
