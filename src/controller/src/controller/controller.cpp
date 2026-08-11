@@ -160,8 +160,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
     // K << -4.6268,-8.0844, -24.6683, -4.9583, 10.1850,2.3943,
     //    -0.6659, -1.0701, -2.3789, -0.6645, 45.9975, 9.1358;
 
-    K << -1.4933,-4.6572, -21.9586, -7.5716, 17.3598 , 5.1327,
-       -0.3039, -0.9236, -2.0352, -0.6430, 31.1853, 9.5174;
+    K << -2.5086,-12.3769, -28.1356, -6.2038, 13.5478 , 3.5440,
+       -0.3163, -1.5677, -2.8431, -0.8154, 31.5225, 9.5911;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -314,7 +314,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
     
-    exp_X[0] = exp_x;
+    exp_X[0] = exp_x=x;
     
 
     X << x, dx, theta, dtheta, phi, dphi;                                       // 填写当前状态向量
