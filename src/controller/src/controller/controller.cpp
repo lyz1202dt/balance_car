@@ -160,8 +160,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
     // K << -4.6268,-8.0844, -24.6683, -4.9583, 10.1850,2.3943,
     //    -0.6659, -1.0701, -2.3789, -0.6645, 45.9975, 9.1358;
 
-    K << -1.83,-5.91, -29.6349, -9.2839, 20.8633  ,  6.1667,
-       -0.4712, -1.5092, -4.3010, -1.3507, 32.6507, 9.9465;
+    K << -1.4933,-4.6572, -21.9586, -7.5716, 17.3598 , 5.1327,
+       -0.3039, -0.9236, -2.0352, -0.6430, 31.1853, 9.5174;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -297,7 +297,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     // 准备填写状态空间方程
     const double leg_angle     = 0.5 * (left_leg_pos[1] + right_leg_pos[1]);
     const double leg_angle_vel = 0.5 * (left_leg_vel[1] + right_leg_vel[1]);
-    double x                   = -0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
+    double x                   = 0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
     double dx                  = -0.5 * (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
     double theta               = normalize_angle(pitch + leg_angle);
     double dtheta              = imu_state_.angular_velocity.y + leg_angle_vel; // 将平均腿摆速度加入解算
@@ -308,12 +308,14 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     dtheta = low_pass_filter(dtheta, 0.5, state_velocity_filtered_[1], state_velocity_filter_initialized_[1]);
     dphi = low_pass_filter(dphi, 0.5, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
 
-    // if (std::abs(x) > 10.0)                                                      // 防止x数值爆炸
-    //     x = x / std::abs(x) * 10.0;
+    if (std::abs(x) > 5.0)                                                      // 防止x数值爆炸
+        x = x / std::abs(x) * 5.0;
 
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
+    
     exp_X[0] = exp_x;
+    
 
     X << x, dx, theta, dtheta, phi, dphi;                                       // 填写当前状态向量
     u = K * (exp_X - X);                                                        // 计算得到控制量u
@@ -335,7 +337,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
 
 
-    // 状态切换安全检测，倾倒时切换位控
+    // 如果倾倒过，那么重置关节位置
     // if (pitch > 1.0 || pitch < -1.0) {
     //     state = 0;
     // } else {
@@ -364,7 +366,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         robot_target_.l1.kd = robot_target_.l2.kd = robot_target_.r1.kd = robot_target_.r2.kd = 2.0;
         // robot_target_.lw.omega=10.0f;
         // robot_target_.rw.omega=10.0f;
-    } else if (state == 2) // 平衡控制
+    } else if (state >= 2&&state<5) // 平衡控制
     {
         leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, left_leg_angle_torque), left_torque);
         leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, right_leg_angle_torque), right_torque);
@@ -374,7 +376,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
         robot_target_.lw.torque = std::clamp<double>(u[0], -10.0, 10.0);
         robot_target_.rw.torque = std::clamp<double>(u[0], -10.0, 10.0);
-    } else if (state == 3) // 离地状态
+    } else if (state == 5) // 离地状态
     {
     }
 
