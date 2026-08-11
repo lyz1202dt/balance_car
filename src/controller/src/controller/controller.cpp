@@ -119,7 +119,7 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
     auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
 
-    node->declare_parameter<int>("state",0);
+    node->declare_parameter<int>("state",1);
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
@@ -141,8 +141,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
         return result;
     });
 
-    K << -2.6481, -3.4273, -9.4616, -2.2331, -7.6960, -1.3998,
-     -0.30, -0.3914, -0.1991, -0.2406, 71.58, 14.21;
+    // K << -3.1138, -6.3412, -35.0854, -4.7025, 9.3203,1.6860,
+    //  -0.5515, -1.1592, 10.0600, 0.6846, 22.7013, 2.4947;
+    K << -2.5947,-5.2892, -28.3971, -3.9204, 9.2061,1.5635,
+      -0.6853, -1.4271, 6.4196, 0.2698, 20.2605, 2.2779;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -283,8 +285,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     double dphi                = -imu_state_.angular_velocity.y;
 
 
-    if (std::abs(x) > 3.0)                                                      // 防止x数值爆炸
-        x = x / std::abs(x) * 3.0;
+    if (std::abs(x) > 2.0)                                                      // 防止x数值爆炸
+        x = x / std::abs(x) * 2.0;
 
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
@@ -296,8 +298,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     // u.setZero();
 
     // 腿长VMC部分，计算关节为了维持当前腿长所需要施加的力矩
-    double left_leg_dis_vmc_T           = vmc_kp * (0.30 - left_leg_pos[0]) - vmc_kd * left_joint_vel[0];
-    double right_leg_dis_vmc_T          = vmc_kp * (0.30 - right_leg_pos[0]) - vmc_kd * right_joint_vel[0];
+    double left_leg_dis_vmc_T           = vmc_kp * (0.30 - left_leg_pos[0]) - vmc_kd * left_leg_vel[0];
+    double right_leg_dis_vmc_T          = vmc_kp * (0.30 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0];
     const double leg_angle_diff         = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
     const double leg_angle_diff_vel     = left_leg_vel[1] - right_leg_vel[1];
     const double leg_angle_sync_torque  = -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel;
@@ -347,8 +349,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
         robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
         robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
-        robot_target_.lw.torque = std::clamp<double>(u[0], -3.0, 3.0);
-        robot_target_.rw.torque = std::clamp<double>(u[0], -3.0, 3.0);
+        robot_target_.lw.torque = std::clamp<double>(u[0], -10.0, 10.0);
+        robot_target_.rw.torque = std::clamp<double>(u[0], -10.0, 10.0);
     } else if (state == 3) // 离地状态
     {
     }

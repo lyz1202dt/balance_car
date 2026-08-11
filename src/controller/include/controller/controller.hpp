@@ -63,7 +63,7 @@ private:
 
     //LQR自动控制相关的变量
     LegCalc leg;
-    int state{1}; 
+    int state{2}; 
     Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};
