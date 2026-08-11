@@ -90,6 +90,22 @@ double normalized_zyx_pitch(const Eigen::Quaterniond& q) {
     return std::asin(clamp_unit(-rotation(2, 0)));
 }
 
+double low_pass_filter(const double input, const double alpha, double& filtered_value, bool& initialized) {
+    if (!std::isfinite(input)) {
+        return initialized ? filtered_value : 0.0;
+    }
+
+    if (!initialized) {
+        filtered_value = input;
+        initialized    = true;
+        return filtered_value;
+    }
+
+    const double clamped_alpha = std::clamp(std::isfinite(alpha) ? alpha : 1.0, 0.0, 1.0);
+    filtered_value = (1.0 - clamped_alpha) * filtered_value + clamped_alpha * input;
+    return filtered_value;
+}
+
 std::string motor_state_interface_name(const size_t motor_index, const size_t interface_index) {
     return std::string(kMotorJointNames[motor_index]) + "/" + kStateInterfaceNames[interface_index];
 }
@@ -118,8 +134,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
     auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
     auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
-
-    node->declare_parameter<int>("state",1);
+    
+    node->declare_parameter<int>("state",2);
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
@@ -141,10 +157,11 @@ controller_interface::CallbackReturn LQRController::on_init() {
         return result;
     });
 
-    // K << -3.1138, -6.3412, -35.0854, -4.7025, 9.3203,1.6860,
-    //  -0.5515, -1.1592, 10.0600, 0.6846, 22.7013, 2.4947;
-    K << -2.5947,-5.2892, -28.3971, -3.9204, 9.2061,1.5635,
-      -0.6853, -1.4271, 6.4196, 0.2698, 20.2605, 2.2779;
+    // K << -4.6268,-8.0844, -24.6683, -4.9583, 10.1850,2.3943,
+    //    -0.6659, -1.0701, -2.3789, -0.6645, 45.9975, 9.1358;
+
+    K << -1.83,-5.91, -29.6349, -9.2839, 20.8633  ,  6.1667,
+       -0.4712, -1.5092, -4.3010, -1.3507, 32.6507, 9.9465;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -180,6 +197,9 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
 
 controller_interface::CallbackReturn LQRController::on_activate(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
+
+    state_velocity_filtered_.fill(0.0);
+    state_velocity_filter_initialized_.fill(false);
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -284,9 +304,12 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     double phi                 = -pitch;
     double dphi                = -imu_state_.angular_velocity.y;
 
+    dx = low_pass_filter(dx, 0.1, state_velocity_filtered_[0], state_velocity_filter_initialized_[0]);
+    dtheta = low_pass_filter(dtheta, 0.5, state_velocity_filtered_[1], state_velocity_filter_initialized_[1]);
+    dphi = low_pass_filter(dphi, 0.5, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
 
-    if (std::abs(x) > 2.0)                                                      // 防止x数值爆炸
-        x = x / std::abs(x) * 2.0;
+    // if (std::abs(x) > 10.0)                                                      // 防止x数值爆炸
+    //     x = x / std::abs(x) * 10.0;
 
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();

@@ -21,3 +21,4 @@ lqr_controller:
     leg_angle_diff_kd: 1.5
     wheel_diff_kp: 0.0
     wheel_diff_kd: 0.05
+    state_velocity_filter_alpha: 0.2
