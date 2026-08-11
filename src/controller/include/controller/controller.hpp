@@ -61,14 +61,15 @@ private:
     bool use_mujoco_sim_chain_{false};
 
 
-    //LQR自动控制相关的变量
+    //LQR自动控制相关
+    bool update_K(float leg_length);
     LegCalc leg;
     int state{2}; 
     Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};
 
-    double vmc_kp{800.0};
+    double vmc_kp{500.0};
     double vmc_kd{80.0};
     double leg_angle_diff_kp_{30.0};
     double leg_angle_diff_kd_{4.0};

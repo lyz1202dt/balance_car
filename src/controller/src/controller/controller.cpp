@@ -160,10 +160,29 @@ controller_interface::CallbackReturn LQRController::on_init() {
     // K << -4.6268,-8.0844, -24.6683, -4.9583, 10.1850,2.3943,
     //    -0.6659, -1.0701, -2.3789, -0.6645, 45.9975, 9.1358;
 
-    K << -2.5086,-12.3769, -28.1356, -6.2038, 13.5478 , 3.5440,
-       -0.3163, -1.5677, -2.8431, -0.8154, 31.5225, 9.5911;
+    // K << -4.6154,-16.7008, -36.6794, -8.1138, 18.1813 , 4.7983,
+    //    -0.5275, -1.9300, -3.6767, -1.0011, 31.9915, 9.7188;
+
+    K << -4.4542,-16.1413, -35.7099, -7.8923, 29.1901, 4.5060,
+       1.1469, 4.0351, 7.6476, 1.5702, 79.1527, 2.4197;
 
     return controller_interface::CallbackReturn::SUCCESS;
+}
+
+bool LQRController::update_K(float leg_length)
+{
+    const double a[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};     //三次多项式拟合K矩阵
+    const double b[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
+    const double c[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
+    const double d[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
+
+    for(int i=0;i<6;i++)    //计算K
+    {
+        K[i]=a[0][i]+b[0][i]*leg_length+c[0][i]*leg_length*leg_length+d[0][i]*leg_length*leg_length*leg_length;
+        K[i+6]=a[1][i]+b[1][i]*leg_length+c[1][i]*leg_length*leg_length+d[1][i]*leg_length*leg_length*leg_length;
+    }
+
+    return true;
 }
 
 controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_lifecycle::State& previous_state) {
@@ -297,16 +316,16 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     // 准备填写状态空间方程
     const double leg_angle     = 0.5 * (left_leg_pos[1] + right_leg_pos[1]);
     const double leg_angle_vel = 0.5 * (left_leg_vel[1] + right_leg_vel[1]);
-    double x                   = 0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
+    double x                   = -0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
     double dx                  = -0.5 * (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
     double theta               = normalize_angle(pitch + leg_angle);
     double dtheta              = imu_state_.angular_velocity.y + leg_angle_vel; // 将平均腿摆速度加入解算
     double phi                 = -pitch;
     double dphi                = -imu_state_.angular_velocity.y;
 
-    dx = low_pass_filter(dx, 0.1, state_velocity_filtered_[0], state_velocity_filter_initialized_[0]);
-    dtheta = low_pass_filter(dtheta, 0.5, state_velocity_filtered_[1], state_velocity_filter_initialized_[1]);
-    dphi = low_pass_filter(dphi, 0.5, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
+    dx = low_pass_filter(dx, 0.07, state_velocity_filtered_[0], state_velocity_filter_initialized_[0]);
+    dtheta = low_pass_filter(dtheta, 0.7, state_velocity_filtered_[1], state_velocity_filter_initialized_[1]);
+    dphi = low_pass_filter(dphi, 0.7, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
 
     if (std::abs(x) > 5.0)                                                      // 防止x数值爆炸
         x = x / std::abs(x) * 5.0;
@@ -314,7 +333,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
     
-    exp_X[0] = exp_x=x;
+    exp_X[0] = exp_x;
     
 
     X << x, dx, theta, dtheta, phi, dphi;                                       // 填写当前状态向量
