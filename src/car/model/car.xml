@@ -126,8 +126,8 @@
     <actuatorfrc name="rw_motor_f" actuator="rw_motor" noise="1e-3"/>
 
     <!-- IMU (imu_main): pose/orientation + acceleration + angular velocity -->
-    <accelerometer name="imu_main_acc" site="imu" noise="1e-2" cutoff="157"/>
-    <gyro name="imu_main_gyro" site="imu" noise="5e-4" cutoff="34.9"/>
+    <accelerometer name="imu_main_acc" site="imu" cutoff="157"/>
+    <gyro name="imu_main_gyro" site="imu" cutoff="34.9"/>
     <framequat name="imu_main_quat" objtype="site" objname="imu"/>
   </sensor>
   <!-- <keyframe> -->
