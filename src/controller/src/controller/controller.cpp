@@ -39,6 +39,7 @@ constexpr double kHipHalfDistance                               = 0.11;
 constexpr double kUpperLinkLength                               = 0.1844;
 constexpr double kLowerLinkLength                               = 0.3130;
 constexpr double kWheelRadius                                   = 0.1;
+constexpr double kWheelSpinIntegralLimit                        = 20.0;
 constexpr std::array<const char*, kMotorCount> kMotorJointNames = {
     "left_front_hip_joint", "left_rear_hip_joint", "left_wheel_joint", "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
 };
@@ -213,12 +214,13 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("leg_angle_diff_kp", leg_angle_diff_kp_);
     auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
     auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
-    auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
+    auto_declare<double>("wheel_diff_ki", wheel_diff_ki_);
     auto_declare<std::vector<double>>("q_diag", array_to_vector(kDefaultQDiag));
     auto_declare<std::vector<double>>("r_diag", array_to_vector(kDefaultRDiag));
 
-    node->declare_parameter<int>("state", 1);
-    node->declare_parameter<double>("exp_pos",0.0);
+    state     = node->declare_parameter<int>("state", 1);
+    exp_x     = node->declare_parameter<double>("exp_pos",0.0);
+    exp_omega = node->declare_parameter<double>("exp_omega",0.0);
 
 
     std::string error;
@@ -251,7 +253,7 @@ controller_interface::CallbackReturn LQRController::on_init() {
         double next_leg_diff_kp     = leg_angle_diff_kp_;
         double next_leg_diff_kd     = leg_angle_diff_kd_;
         double next_wheel_diff_kp   = wheel_diff_kp_;
-        double next_wheel_diff_kd   = wheel_diff_kd_;
+        double next_wheel_diff_ki   = wheel_diff_ki_;
         int next_state              = state;
         bool should_update_lqr_gain = false;
         std::string error;
@@ -265,8 +267,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
                 next_leg_diff_kd = param.as_double();
             } else if (param.get_name() == "wheel_diff_kp") {
                 next_wheel_diff_kp = param.as_double();
-            } else if (param.get_name() == "wheel_diff_kd") {
-                next_wheel_diff_kd = param.as_double();
+            } else if (param.get_name() == "wheel_diff_ki") {
+                next_wheel_diff_ki = param.as_double();
             } else if (param.get_name() == "state") {
                 next_state = param.as_int();
             } else if (param.get_name() == "q_diag" || param.get_name() == "r_diag") {
@@ -294,6 +296,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
             {
                 exp_x=param.as_double();
             }
+            else if(param.get_name() =="exp_omega")
+            {
+                exp_omega=param.as_double();
+            }
         }
 
         Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> next_gain;
@@ -307,7 +313,7 @@ controller_interface::CallbackReturn LQRController::on_init() {
         leg_angle_diff_kp_ = next_leg_diff_kp;
         leg_angle_diff_kd_ = next_leg_diff_kd;
         wheel_diff_kp_     = next_wheel_diff_kp;
-        wheel_diff_kd_     = next_wheel_diff_kd;
+        wheel_diff_ki_     = next_wheel_diff_ki;
         state              = next_state;
 
         if (should_update_lqr_gain) {
@@ -448,7 +454,7 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
     leg_angle_diff_kp_    = get_node()->get_parameter("leg_angle_diff_kp").as_double();
     leg_angle_diff_kd_    = get_node()->get_parameter("leg_angle_diff_kd").as_double();
     wheel_diff_kp_        = get_node()->get_parameter("wheel_diff_kp").as_double();
-    wheel_diff_kd_        = get_node()->get_parameter("wheel_diff_kd").as_double();
+    wheel_diff_ki_        = get_node()->get_parameter("wheel_diff_ki").as_double();
 
     robot_exp_vel = get_node()->create_subscription<geometry_msgs::msg::Twist>(
         kCmdVelTopic, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
@@ -472,6 +478,7 @@ controller_interface::CallbackReturn LQRController::on_activate(const rclcpp_lif
 
     state_velocity_filtered_.fill(0.0);
     state_velocity_filter_initialized_.fill(false);
+    wheel_spin_error_integral_ = 0.0;
 
     return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -539,7 +546,6 @@ controller_interface::return_type LQRController::update(const rclcpp::Time& time
 
 void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp::Duration& period) {
     (void)time;
-    (void)period;
 
     // 提取机体 pitch。Eigen::eulerAngles(2, 1, 0) 可能把接近直立的姿态表示成 pitch 接近 pi。
     Eigen::Quaterniond q;
@@ -654,9 +660,24 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     double right_leg_dis_vmc_T          = vmc_kp * (0.3 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0];
     const double leg_angle_diff         = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
     const double leg_angle_diff_vel     = left_leg_vel[1] - right_leg_vel[1];
-    const double leg_angle_sync_torque  = -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel;
+    const double spin_omega             = imu_state_.angular_velocity.z;
+    const double spin_error             = exp_omega - spin_omega;
+    if (state == 2) {
+        wheel_spin_error_integral_ = std::clamp(
+            wheel_spin_error_integral_ + spin_error * period.seconds(), -kWheelSpinIntegralLimit, kWheelSpinIntegralLimit);
+    } else {
+        wheel_spin_error_integral_ = 0.0;
+    }
+    const double spin_control_torque_diff =
+        state == 2 ? wheel_diff_kp_ * spin_error + wheel_diff_ki_ * wheel_spin_error_integral_ : 0.0;
+    const double average_leg_length     = 0.5 * (left_leg_pos[0] + right_leg_pos[0]);
+    const double spin_compensation_torque = -spin_control_torque_diff * average_leg_length / kWheelRadius;
+    const double leg_angle_sync_torque  =
+        -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel + spin_compensation_torque;
     const double left_leg_angle_torque  = u[1] + leg_angle_sync_torque;
     const double right_leg_angle_torque = u[1] - leg_angle_sync_torque;
+    const double left_wheel_torque      = u[0] - spin_control_torque_diff;
+    const double right_wheel_torque     = u[0] + spin_control_torque_diff;
 
     //VMC映射
     Eigen::Vector2d left_torque, right_torque;
@@ -668,8 +689,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
     robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
     robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
-    robot_target_.lw.torque = std::clamp<double>(u[0], -10.0, 10.0);
-    robot_target_.rw.torque = std::clamp<double>(u[0], -10.0, 10.0);
+    robot_target_.lw.torque = std::clamp<double>(left_wheel_torque, -10.0, 10.0);
+    robot_target_.rw.torque = std::clamp<double>(right_wheel_torque, -10.0, 10.0);
     
     if (state == 0)        // VMC测试
     {

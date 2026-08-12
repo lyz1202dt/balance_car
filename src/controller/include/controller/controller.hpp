@@ -84,8 +84,9 @@ private:
     double vmc_kd{40.0};
     double leg_angle_diff_kp_{30.0};
     double leg_angle_diff_kd_{4.0};
-    double wheel_diff_kp_{0.0};
-    double wheel_diff_kd_{0.05};
+    double wheel_diff_kp_{0.1};
+    double wheel_diff_ki_{0.002};
+    double wheel_spin_error_integral_{0.0};
     std::array<double, 3> state_velocity_filtered_{};
     std::array<bool, 3> state_velocity_filter_initialized_{};
 };

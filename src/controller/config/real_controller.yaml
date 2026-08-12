@@ -12,8 +12,9 @@ lqr_controller:
     torque_limit: 20.0
     leg_angle_diff_kp: 30.0
     leg_angle_diff_kd: 1.5
-    wheel_diff_kp: 0.0
-    wheel_diff_kd: 0.05
+    wheel_diff_kp: 0.05
+    wheel_diff_ki: 0.0
+    exp_omega: 0.0
     state_velocity_filter_alpha: 0.2
     q_diag: [10.0, 400.0, 100.0, 40.0, 600.0, 50.0]
     r_diag: [8.0, 0.5]
