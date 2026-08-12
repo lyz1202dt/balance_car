@@ -98,6 +98,11 @@ double normalized_zyx_pitch(const Eigen::Quaterniond& q) {
     return std::asin(clamp_unit(-rotation(2, 0)));
 }
 
+double normalized_zyx_roll(const Eigen::Quaterniond& q) {
+    const Eigen::Matrix3d rotation = q.toRotationMatrix();
+    return std::atan2(rotation(2, 1), rotation(2, 2));
+}
+
 double low_pass_filter(const double input, const double alpha, double& filtered_value, bool& initialized) {
     if (!std::isfinite(input)) {
         return initialized ? filtered_value : 0.0;
@@ -172,6 +177,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("torque_limit", torque_limit_);
     auto_declare<double>("vmc_kp", vmc_kp);
     auto_declare<double>("vmc_kd", vmc_kd);
+    auto_declare<double>("body_width", body_width_);
+    auto_declare<double>("leg_exp_length", leg_exp_length);
     auto_declare<double>("leg_angle_diff_kp", leg_angle_diff_kp_);
     auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
     auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
@@ -182,6 +189,7 @@ controller_interface::CallbackReturn LQRController::on_init() {
     state     = node->declare_parameter<int>("state", 1);
     exp_x     = node->declare_parameter<double>("exp_pos",0.0);
     exp_omega = node->declare_parameter<double>("exp_omega",0.0);
+    exp_roll  = node->declare_parameter<double>("exp_roll",0.0);
 
 
     std::string error;
@@ -200,6 +208,8 @@ controller_interface::CallbackReturn LQRController::on_init() {
         double next_torque_limit    = torque_limit_;
         double next_vmc_kp          = vmc_kp;
         double next_vmc_kd          = vmc_kd;
+        double next_body_width      = body_width_;
+        double next_leg_exp_length  = leg_exp_length;
         double next_leg_diff_kp     = leg_angle_diff_kp_;
         double next_leg_diff_kd     = leg_angle_diff_kd_;
         double next_wheel_diff_kp   = wheel_diff_kp_;
@@ -213,6 +223,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
                 next_vmc_kp = param.as_double();
             } else if (param.get_name() == "vmc_kd") {
                 next_vmc_kd = param.as_double();
+            } else if (param.get_name() == "body_width") {
+                next_body_width = param.as_double();
+            } else if (param.get_name() == "leg_exp_length") {
+                next_leg_exp_length = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kp") {
                 next_leg_diff_kp = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kd") {
@@ -232,11 +246,17 @@ controller_interface::CallbackReturn LQRController::on_init() {
             {
                 exp_omega=param.as_double();
             }
+            else if(param.get_name() =="exp_roll")
+            {
+                exp_roll=param.as_double();
+            }
         }
 
         torque_limit_      = next_torque_limit;
         vmc_kp             = next_vmc_kp;
         vmc_kd             = next_vmc_kd;
+        body_width_        = next_body_width;
+        leg_exp_length     = next_leg_exp_length;
         leg_angle_diff_kp_ = next_leg_diff_kp;
         leg_angle_diff_kd_ = next_leg_diff_kd;
         wheel_diff_kp_     = next_wheel_diff_kp;
@@ -337,6 +357,8 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
     torque_limit_         = get_node()->get_parameter("torque_limit").as_double();
     vmc_kp                = get_node()->get_parameter("vmc_kp").as_double();
     vmc_kd                = get_node()->get_parameter("vmc_kd").as_double();
+    body_width_           = get_node()->get_parameter("body_width").as_double();
+    leg_exp_length        = get_node()->get_parameter("leg_exp_length").as_double();
     leg_angle_diff_kp_    = get_node()->get_parameter("leg_angle_diff_kp").as_double();
     leg_angle_diff_kd_    = get_node()->get_parameter("leg_angle_diff_kd").as_double();
     wheel_diff_kp_        = get_node()->get_parameter("wheel_diff_kp").as_double();
@@ -441,6 +463,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     q.z() = imu_state_.orientation.z;
     q.normalize();
     const double pitch = normalized_zyx_pitch(q);
+    const double roll  = normalized_zyx_roll(q);
     // RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
 
     // 提取等效摆的角度和长度
@@ -544,9 +567,17 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
     
     // 腿长VMC部分，计算关节为了维持当前腿长所需要施加的力矩
+    const double safe_body_width = std::max(std::abs(body_width_), 1.0e-6);
+    const double leg_height_roll = std::atan2(right_leg_pos[0] - left_leg_pos[0], safe_body_width);
+    const double combined_roll = normalize_angle(roll + leg_height_roll);
+    const double roll_error = normalize_angle(exp_roll - combined_roll);
+    const double leg_length_diff = safe_body_width * std::tan(roll_error);
+    left_leg_exp_length = leg_exp_length + 0.5 * leg_length_diff;
+    right_leg_exp_length = leg_exp_length - 0.5 * leg_length_diff;
+
     double vmc_mass_component=state==2?(kBaselinkMass*0.5*9.8*cos(theta)):0.0;
-    double left_leg_dis_vmc_T           = vmc_kp * (0.3 - left_leg_pos[0]) - vmc_kd * left_leg_vel[0]+vmc_mass_component;
-    double right_leg_dis_vmc_T          = vmc_kp * (0.3 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0]+vmc_mass_component;
+    double left_leg_dis_vmc_T           = vmc_kp * (left_leg_exp_length - left_leg_pos[0]) - vmc_kd * left_leg_vel[0]+vmc_mass_component;
+    double right_leg_dis_vmc_T          = vmc_kp * (right_leg_exp_length - right_leg_pos[0]) - vmc_kd * right_leg_vel[0]+vmc_mass_component;
     const double leg_angle_diff         = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
     const double leg_angle_diff_vel     = left_leg_vel[1] - right_leg_vel[1];
     const double spin_omega             = imu_state_.angular_velocity.z;
@@ -583,8 +614,9 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
     RCLCPP_INFO_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 100,
-        "state=%d\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)",
-        state, left_leg_force[0], right_leg_force[0],u[0], u[1],left_leg_pos[0],right_leg_pos[0]);
+        "state=%d\npos=%.4f\nroll=%.4f\nleg_roll=%.4f\ncombined_roll=%.4f\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)\nexp_length=(%.4f,%.4f)",
+        state, x, roll, leg_height_roll, combined_roll, left_leg_force[0], right_leg_force[0],u[0], u[1],left_leg_pos[0],right_leg_pos[0],
+        left_leg_exp_length, right_leg_exp_length);
 }
 
 void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {

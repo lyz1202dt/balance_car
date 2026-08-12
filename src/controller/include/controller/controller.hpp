@@ -77,14 +77,28 @@ private:
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};              //期望位置
     double exp_omega{0.0};          //期望自旋角速度
+    double exp_roll{0.0};           //期望roll角
 
-    double vmc_kp{600.0};
+    //ROLL轴腿长控制
+    double body_width_{0.34};
+    double leg_exp_length{0.28};
+    double left_leg_exp_length{0.28};
+    double right_leg_exp_length{0.28};
+
+    //腿长VMC
+    double vmc_kp{600.0};           
     double vmc_kd{40.0};
-    double leg_angle_diff_kp_{30.0};
+
+    //腿同步PD控制器
+    double leg_angle_diff_kp_{30.0};    
     double leg_angle_diff_kd_{4.0};
-    double wheel_diff_kp_{0.1};
+
+    //YAW轴轮速控制器
+    double wheel_diff_kp_{0.1};         
     double wheel_diff_ki_{0.002};
     double wheel_spin_error_integral_{0.0};
+
+
     std::array<double, 3> state_velocity_filtered_{};
     std::array<bool, 3> state_velocity_filter_initialized_{};
 };
