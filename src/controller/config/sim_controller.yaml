@@ -21,5 +21,5 @@ lqr_controller:
     leg_angle_diff_kd: 1.5
     wheel_diff_kp: 0.0
     wheel_diff_kd: 0.05
-    q_diag: [10.0, 400.0, 100.0, 40.0, 600.0, 50.0]
+    q_diag: [0.3, 3.0, 100.0, 40.0, 600.0, 50.0]
     r_diag: [8.0, 0.5]

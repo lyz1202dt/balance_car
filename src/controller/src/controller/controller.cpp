@@ -1,16 +1,16 @@
 #include <controller/controller.hpp>
 
+#include <Eigen/Eigenvalues>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
-#include <Eigen/Eigenvalues>
 #include <mutex>
+#include <rclcpp/duration.hpp>
 #include <rclcpp/logging.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -20,6 +20,8 @@
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <robot_interfaces/msg/motor_state.hpp>
 #include <robot_interfaces/msg/motor_target.hpp>
+
+using namespace std::chrono_literals;
 
 namespace lqr_controller {
 
@@ -109,7 +111,7 @@ double low_pass_filter(const double input, const double alpha, double& filtered_
     }
 
     const double clamped_alpha = std::clamp(std::isfinite(alpha) ? alpha : 1.0, 0.0, 1.0);
-    filtered_value = (1.0 - clamped_alpha) * filtered_value + clamped_alpha * input;
+    filtered_value             = (1.0 - clamped_alpha) * filtered_value + clamped_alpha * input;
     return filtered_value;
 }
 
@@ -151,11 +153,7 @@ bool parameter_to_double_vector(const rclcpp::Parameter& param, std::vector<doub
 
 template <size_t N>
 bool parse_diag_values(
-    const std::vector<double>& values,
-    const char* name,
-    const bool strictly_positive,
-    std::array<double, N>& diag,
-    std::string& error) {
+    const std::vector<double>& values, const char* name, const bool strictly_positive, std::array<double, N>& diag, std::string& error) {
     if (values.size() != N) {
         error = std::string(name) + " must contain exactly " + std::to_string(N) + " values";
         return false;
@@ -183,10 +181,7 @@ bool parse_diag_values(
 
 template <size_t N>
 bool get_diag_parameter(
-    const rclcpp_lifecycle::LifecycleNode::SharedPtr& node,
-    const char* name,
-    const bool strictly_positive,
-    std::array<double, N>& diag,
+    const rclcpp_lifecycle::LifecycleNode::SharedPtr& node, const char* name, const bool strictly_positive, std::array<double, N>& diag,
     std::string& error) {
     rclcpp::Parameter param;
     if (!node->get_parameter(name, param)) {
@@ -206,6 +201,8 @@ bool get_diag_parameter(
 LQRController::LQRController()
     : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {
     imu_state_.orientation.w = 1.0;
+    air_K.setZero();
+    K.setZero();
 }
 
 controller_interface::CallbackReturn LQRController::on_init() {
@@ -219,8 +216,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
     auto_declare<std::vector<double>>("q_diag", array_to_vector(kDefaultQDiag));
     auto_declare<std::vector<double>>("r_diag", array_to_vector(kDefaultRDiag));
-    
-    node->declare_parameter<int>("state",2);
+
+    node->declare_parameter<int>("state", 1);
+    node->declare_parameter<double>("exp_pos",0.0);
+
 
     std::string error;
     if (!get_diag_parameter(node, "q_diag", false, q_diag_, error) || !get_diag_parameter(node, "r_diag", true, r_diag_, error)) {
@@ -235,22 +234,26 @@ controller_interface::CallbackReturn LQRController::on_init() {
     }
     {
         std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
-        K = initial_gain;
+        K           = initial_gain;
+        air_K(1,2)=K(1,2);
+        air_K(1,3)=K(1,3);
     }
+
+    last_state_switch_time = get_node()->get_clock()->now();
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
 
-        auto next_q_diag              = q_diag_;
-        auto next_r_diag              = r_diag_;
-        double next_torque_limit      = torque_limit_;
-        double next_leg_diff_kp       = leg_angle_diff_kp_;
-        double next_leg_diff_kd       = leg_angle_diff_kd_;
-        double next_wheel_diff_kp     = wheel_diff_kp_;
-        double next_wheel_diff_kd     = wheel_diff_kd_;
-        int next_state                = state;
-        bool should_update_lqr_gain   = false;
+        auto next_q_diag            = q_diag_;
+        auto next_r_diag            = r_diag_;
+        double next_torque_limit    = torque_limit_;
+        double next_leg_diff_kp     = leg_angle_diff_kp_;
+        double next_leg_diff_kd     = leg_angle_diff_kd_;
+        double next_wheel_diff_kp   = wheel_diff_kp_;
+        double next_wheel_diff_kd   = wheel_diff_kd_;
+        int next_state              = state;
+        bool should_update_lqr_gain = false;
         std::string error;
 
         for (const auto& param : params) {
@@ -287,6 +290,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
                 }
                 should_update_lqr_gain = true;
             }
+            else if(param.get_name() =="exp_pos")
+            {
+                exp_x=param.as_double();
+            }
         }
 
         Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> next_gain;
@@ -299,22 +306,23 @@ controller_interface::CallbackReturn LQRController::on_init() {
         torque_limit_      = next_torque_limit;
         leg_angle_diff_kp_ = next_leg_diff_kp;
         leg_angle_diff_kd_ = next_leg_diff_kd;
-        wheel_diff_kp_    = next_wheel_diff_kp;
-        wheel_diff_kd_    = next_wheel_diff_kd;
-        state             = next_state;
+        wheel_diff_kp_     = next_wheel_diff_kp;
+        wheel_diff_kd_     = next_wheel_diff_kd;
+        state              = next_state;
 
         if (should_update_lqr_gain) {
             q_diag_ = next_q_diag;
             r_diag_ = next_r_diag;
             {
                 std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
-                K = next_gain;
+                K           = next_gain;
+                air_K(1,2)=K(1,2);
+                air_K(1,3)=K(1,3);
             }
             RCLCPP_INFO(
-                get_node()->get_logger(),
-                "Updated LQR gain K: [%.4f %.4f %.4f %.4f %.4f %.4f; %.4f %.4f %.4f %.4f %.4f %.4f]",
-                next_gain(0, 0), next_gain(0, 1), next_gain(0, 2), next_gain(0, 3), next_gain(0, 4), next_gain(0, 5),
-                next_gain(1, 0), next_gain(1, 1), next_gain(1, 2), next_gain(1, 3), next_gain(1, 4), next_gain(1, 5));
+                get_node()->get_logger(), "Updated LQR gain K: [%.4f %.4f %.4f %.4f %.4f %.4f; %.4f %.4f %.4f %.4f %.4f %.4f]",
+                next_gain(0, 0), next_gain(0, 1), next_gain(0, 2), next_gain(0, 3), next_gain(0, 4), next_gain(0, 5), next_gain(1, 0),
+                next_gain(1, 1), next_gain(1, 2), next_gain(1, 3), next_gain(1, 4), next_gain(1, 5));
         }
         return result;
     });
@@ -323,31 +331,28 @@ controller_interface::CallbackReturn LQRController::on_init() {
 }
 
 bool LQRController::solve_lqr_gain(
-    const std::array<double, 6>& q_diag,
-    const std::array<double, 2>& r_diag,
-    Eigen::Matrix<double, 2, 6>& gain,
-    std::string& error) const {
-    using Matrix6d   = Eigen::Matrix<double, kLqrStateSize, kLqrStateSize>;
-    using Matrix62d  = Eigen::Matrix<double, kLqrStateSize, kLqrInputSize>;
-    using Matrix2d   = Eigen::Matrix<double, kLqrInputSize, kLqrInputSize>;
-    using Matrix12d  = Eigen::Matrix<double, 2 * kLqrStateSize, 2 * kLqrStateSize>;
-    using Matrix6cd  = Eigen::Matrix<std::complex<double>, kLqrStateSize, kLqrStateSize>;
+    const std::array<double, 6>& q_diag, const std::array<double, 2>& r_diag, Eigen::Matrix<double, 2, 6>& gain, std::string& error) const {
+    using Matrix6d  = Eigen::Matrix<double, kLqrStateSize, kLqrStateSize>;
+    using Matrix62d = Eigen::Matrix<double, kLqrStateSize, kLqrInputSize>;
+    using Matrix2d  = Eigen::Matrix<double, kLqrInputSize, kLqrInputSize>;
+    using Matrix12d = Eigen::Matrix<double, 2 * kLqrStateSize, 2 * kLqrStateSize>;
+    using Matrix6cd = Eigen::Matrix<std::complex<double>, kLqrStateSize, kLqrStateSize>;
 
     Matrix6d A;
     A << 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
-        0.0, 0.0, -13.9285, 0.0, 0.6373, 0.0,
-        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 98.2488, 0.0, 17.6903, 0.0,
-        0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        0.0, 0.0, 44.9938, 0.0, 54.3689, 0.0;
+    0.0, 0.0, -13.9285, 0.0, 0.6373, 0.0,
+    0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 98.2488, 0.0, 17.6903, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    0.0, 0.0, 44.9938, 0.0, 54.3689, 0.0;
 
     Matrix62d B;
     B << 0.0, 0.0,
-        15.4595, -3.3942,
-        0.0, 0.0,
-        -65.5078, 39.5039,
-        0.0, 0.0,
-        -7.9383, 50.5446;
+    15.4595, -3.3942,
+    0.0, 0.0,
+    -65.5078, 39.5039,
+    0.0, 0.0,
+    -7.9383, 50.5446;
 
     Matrix6d Q = Matrix6d::Zero();
     for (size_t i = 0; i < kLqrStateSize; ++i) {
@@ -363,11 +368,11 @@ bool LQRController::solve_lqr_gain(
         R_inv(i, i) = 1.0 / r_diag[i];
     }
 
-    Matrix12d H = Matrix12d::Zero();
-    H.template block<kLqrStateSize, kLqrStateSize>(0, 0)                           = A;
-    H.template block<kLqrStateSize, kLqrStateSize>(0, kLqrStateSize)               = -B * R_inv * B.transpose();
-    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, 0)               = -Q;
-    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, kLqrStateSize)   = -A.transpose();
+    Matrix12d H                                                                  = Matrix12d::Zero();
+    H.template block<kLqrStateSize, kLqrStateSize>(0, 0)                         = A;
+    H.template block<kLqrStateSize, kLqrStateSize>(0, kLqrStateSize)             = -B * R_inv * B.transpose();
+    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, 0)             = -Q;
+    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, kLqrStateSize) = -A.transpose();
 
     Eigen::ComplexEigenSolver<Matrix12d> eigen_solver(H);
     if (eigen_solver.info() != Eigen::Success) {
@@ -561,39 +566,89 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         leg.forward_velocity(right_joint_pos, right_joint_vel, right_leg_vel);
     }
 
-    // 准备填写状态空间方程
+    // 准备状态空间方程相关数据
     const double leg_angle     = 0.5 * (left_leg_pos[1] + right_leg_pos[1]);
     const double leg_angle_vel = 0.5 * (left_leg_vel[1] + right_leg_vel[1]);
-    double x                   = -0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
-    double dx                  = -0.5 * (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
+    double x                   = 0.5 * (robot_state_.lw.rad + robot_state_.rw.rad) * kWheelRadius;
+    double dx                  = 0.5 * (robot_state_.lw.omega + robot_state_.rw.omega) * kWheelRadius;
     double theta               = normalize_angle(pitch + leg_angle);
     double dtheta              = imu_state_.angular_velocity.y + leg_angle_vel; // 将平均腿摆速度加入解算
     double phi                 = -pitch;
     double dphi                = -imu_state_.angular_velocity.y;
 
-    dx = low_pass_filter(dx, 0.07, state_velocity_filtered_[0], state_velocity_filter_initialized_[0]);
+    dx     = low_pass_filter(dx, 0.07, state_velocity_filtered_[0], state_velocity_filter_initialized_[0]);
     dtheta = low_pass_filter(dtheta, 0.7, state_velocity_filtered_[1], state_velocity_filter_initialized_[1]);
-    dphi = low_pass_filter(dphi, 0.7, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
+    dphi   = low_pass_filter(dphi, 0.7, state_velocity_filtered_[2], state_velocity_filter_initialized_[2]);
 
-    if (std::abs(x) > 5.0)                                                      // 防止x数值爆炸
-        x = x / std::abs(x) * 5.0;
+    // 支撑力计算
+    Eigen::Vector2d left_leg_force, right_leg_force;
+    left_leg_force.setZero();
+    right_leg_force.setZero();
+    leg.forward_dynamics(left_joint_pos, Eigen::Vector2d(robot_state_.l1.torque, robot_state_.l2.torque), left_leg_force);
+    leg.forward_dynamics(right_joint_pos, Eigen::Vector2d(robot_state_.r1.torque, robot_state_.r2.torque), right_leg_force);
 
-    Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
-    exp_X.setZero();
-    
-    exp_X[0] = exp_x=x;
-    
 
-    X << x, dx, theta, dtheta, phi, dphi;                                       // 填写当前状态向量
-    Eigen::Matrix<double, 2, 6> K_snapshot;
-    {
-        std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
-        K_snapshot = K;
+    //评估机器人状态，选择控制策略
+    auto now = get_node()->get_clock()->now();
+    if (pitch > 0.3 || pitch < -0.3) {                                // 姿态极大倾斜，系统已经失稳
+        if (now - last_state_switch_time > 300ms)                     // 上一次状态切换在300ms前
+        {
+            if (state != 1)
+                last_state_switch_time = now;
+
+            state = 1;
+        }
+    } else if (left_leg_force[0] > 8.0 && right_leg_force[0] > 8.0) { // 左右腿与地面的压力都要大于8N，才认为可控
+        if (now - last_state_switch_time > 300ms)                     // 上一次状态切换在300ms前
+        {
+            if (state != 2)
+                last_state_switch_time = now;
+            state = 2;
+        }
+    } else {
+        if (now - last_state_switch_time > 300ms)                     // 上一次状态切换在300ms前
+        {
+            if (state != 3)
+                last_state_switch_time = now;
+            state = 3;
+        }
     }
-    u = K_snapshot * (exp_X - X);                                               // 计算得到控制量u
 
-    // u.setZero();
 
+    if(state==0)
+    {
+        u.setZero();
+    }else if(state==1)
+    {
+        u.setZero();
+    }else if(state==2)
+    {
+        Eigen::Vector<double, 6> X, exp_X;
+        exp_X.setZero();
+
+        if(exp_x-x>5.0)         //防止x数值爆炸
+            exp_x=x+5.0;
+        else if(exp_x-x<-5.0)
+            exp_x=x-5.0;
+
+        
+        exp_X[0]=exp_x;
+        X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
+
+        lqr_gain_mutex_.lock();
+        u = K * (exp_X - X);
+        lqr_gain_mutex_.unlock();
+    }
+    else if(state==3)
+    {
+        Eigen::Vector<double, 6> X;
+        X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
+        lqr_gain_mutex_.lock();
+        u = -air_K*X;
+        lqr_gain_mutex_.unlock();
+    }
+
+    
     // 腿长VMC部分，计算关节为了维持当前腿长所需要施加的力矩
     double left_leg_dis_vmc_T           = vmc_kp * (0.3 - left_leg_pos[0]) - vmc_kd * left_leg_vel[0];
     double right_leg_dis_vmc_T          = vmc_kp * (0.3 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0];
@@ -602,22 +657,20 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     const double leg_angle_sync_torque  = -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel;
     const double left_leg_angle_torque  = u[1] + leg_angle_sync_torque;
     const double right_leg_angle_torque = u[1] - leg_angle_sync_torque;
-    const double wheel_diff             = normalize_angle(robot_state_.lw.rad - robot_state_.rw.rad);
-    const double wheel_diff_vel         = robot_state_.lw.omega - robot_state_.rw.omega;
-    const double wheel_sync_torque      = -wheel_diff_kp_ * wheel_diff - wheel_diff_kd_ * wheel_diff_vel;
 
-
-
-
-    // 如果倾倒过，那么重置关节位置
-    // if (pitch > 1.0 || pitch < -1.0) {
-    //     state = 0;
-    // } else {
-    //     // state = 2;
-    // }
-
-
+    //VMC映射
     Eigen::Vector2d left_torque, right_torque;
+    leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, left_leg_angle_torque), left_torque);
+    leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, right_leg_angle_torque), right_torque);
+
+    //设置各关节期望力矩
+    robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
+    robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
+    robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
+    robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
+    robot_target_.lw.torque = std::clamp<double>(u[0], -10.0, 10.0);
+    robot_target_.rw.torque = std::clamp<double>(u[0], -10.0, 10.0);
+    
     if (state == 0)        // VMC测试
     {
         leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, leg_angle_sync_torque), left_torque);
@@ -629,35 +682,30 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     } else if (state == 1) // 位控控制
     {
         Eigen::Vector2d rad = {0.0, 0.0};
-        // if (leg.inverse_kinematics({0.27, 0.2}, rad)) {
         if (leg.inverse_kinematics({0.27, 0.0}, rad)) {
             robot_target_.l1.rad = robot_target_.r1.rad = static_cast<float>(rad[0]);
             robot_target_.l2.rad = robot_target_.r2.rad = static_cast<float>(rad[1]);
         }
         robot_target_.l1.kp = robot_target_.l2.kp = robot_target_.r1.kp = robot_target_.r2.kp = 50.0;
         robot_target_.l1.kd = robot_target_.l2.kd = robot_target_.r1.kd = robot_target_.r2.kd = 2.0;
-        // robot_target_.lw.omega=10.0f;
-        // robot_target_.rw.omega=10.0f;
-    } else if (state >= 2&&state<5) // 平衡控制
+    } else if (state == 2) // 平衡控制
     {
-        leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, left_leg_angle_torque), left_torque);
-        leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, right_leg_angle_torque), right_torque);
-        robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
-        robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
-        robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
-        robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
-        robot_target_.lw.torque = std::clamp<double>(u[0], -10.0, 10.0);
-        robot_target_.rw.torque = std::clamp<double>(u[0], -10.0, 10.0);
-    } else if (state == 5) // 离地状态
+        
+    } else if (state == 3) // 离地状态
     {
+    //     lqr_gain_mutex_.lock();
+    //     u = air_K * (exp_X - X);
+    //     lqr_gain_mutex_.unlock();
+    //     robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
+    //     robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
+    //     robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
+    //     robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
     }
 
     RCLCPP_INFO_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 100,
-        "X=(%.4f,%.4f,%.4f,%.4f,%.4f,%.4f)\nu:T=%.4f,Tp=%.4f\nstate=%d,(left=%.4f,right=%.4f)\ndiff:leg=%.4f,dleg=%.4f,wheel=%.4f,dwheel=%."
-        "4f,sync_leg=%.4f,sync_wheel=%.4f\nr1=%.4f,r2=%.4f",
-        X[0], X[1], X[2], X[3], X[4], X[5], u[0], u[1], state, left_leg_dis_vmc_T, right_leg_dis_vmc_T, leg_angle_diff, leg_angle_diff_vel,
-        wheel_diff, wheel_diff_vel, leg_angle_sync_torque, wheel_sync_torque, right_torque[0], right_torque[1]);
+        "state=%d\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\n",
+        state, left_leg_force[0], right_leg_force[0],u[0], u[1]);
 }
 
 void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {

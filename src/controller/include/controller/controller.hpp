@@ -69,15 +69,18 @@ private:
         Eigen::Matrix<double, 2, 6>& gain,
         std::string& error) const;
     LegCalc leg;
-    int state{2}; 
+    int state{1};
+    rclcpp::Time last_state_switch_time;
     Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
+    Eigen::Matrix<double,2,6> air_K;
     mutable std::mutex lqr_gain_mutex_;
     Eigen::Vector2d u;              //控制向量
-    double exp_x{0.0};
+    double exp_x{0.0};              //期望位置
+    double exp_omega{0.0};          //期望自旋角速度
     std::array<double, 6> q_diag_{{10.0, 400.0, 100.0, 40.0, 600.0, 50.0}};
     std::array<double, 2> r_diag_{{8.0, 0.5}};
 
-    double vmc_kp{300.0};
+    double vmc_kp{600.0};
     double vmc_kd{40.0};
     double leg_angle_diff_kp_{30.0};
     double leg_angle_diff_kd_{4.0};
