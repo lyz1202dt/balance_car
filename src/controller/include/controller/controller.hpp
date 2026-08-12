@@ -81,6 +81,10 @@ private:
 
     //ROLL轴腿长控制
     double body_width_{0.34};
+    double base_link_com_height_{0.1265};
+    double centrifugal_accel_filter_alpha_{0.2};
+    double centrifugal_force_ff_gain_{1.0};
+    double centrifugal_force_ff_limit_{40.0};
     double leg_exp_length{0.28};
     double left_leg_exp_length{0.28};
     double right_leg_exp_length{0.28};
@@ -101,6 +105,8 @@ private:
 
     std::array<double, 3> state_velocity_filtered_{};
     std::array<bool, 3> state_velocity_filter_initialized_{};
+    double lateral_accel_filtered_{0.0};
+    bool lateral_accel_filter_initialized_{false};
 };
 
 }  // namespace lqr_controller

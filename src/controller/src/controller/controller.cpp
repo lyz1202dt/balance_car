@@ -103,6 +103,11 @@ double normalized_zyx_roll(const Eigen::Quaterniond& q) {
     return std::atan2(rotation(2, 1), rotation(2, 2));
 }
 
+double normalized_zyx_yaw(const Eigen::Quaterniond& q) {
+    const Eigen::Matrix3d rotation = q.toRotationMatrix();
+    return std::atan2(rotation(1, 0), rotation(0, 0));
+}
+
 double low_pass_filter(const double input, const double alpha, double& filtered_value, bool& initialized) {
     if (!std::isfinite(input)) {
         return initialized ? filtered_value : 0.0;
@@ -178,6 +183,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("vmc_kp", vmc_kp);
     auto_declare<double>("vmc_kd", vmc_kd);
     auto_declare<double>("body_width", body_width_);
+    auto_declare<double>("base_link_com_height", base_link_com_height_);
+    auto_declare<double>("centrifugal_accel_filter_alpha", centrifugal_accel_filter_alpha_);
+    auto_declare<double>("centrifugal_force_ff_gain", centrifugal_force_ff_gain_);
+    auto_declare<double>("centrifugal_force_ff_limit", centrifugal_force_ff_limit_);
     auto_declare<double>("leg_exp_length", leg_exp_length);
     auto_declare<double>("leg_angle_diff_kp", leg_angle_diff_kp_);
     auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
@@ -209,6 +218,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
         double next_vmc_kp          = vmc_kp;
         double next_vmc_kd          = vmc_kd;
         double next_body_width      = body_width_;
+        double next_base_link_com_height = base_link_com_height_;
+        double next_centrifugal_accel_filter_alpha = centrifugal_accel_filter_alpha_;
+        double next_centrifugal_force_ff_gain = centrifugal_force_ff_gain_;
+        double next_centrifugal_force_ff_limit = centrifugal_force_ff_limit_;
         double next_leg_exp_length  = leg_exp_length;
         double next_leg_diff_kp     = leg_angle_diff_kp_;
         double next_leg_diff_kd     = leg_angle_diff_kd_;
@@ -225,6 +238,14 @@ controller_interface::CallbackReturn LQRController::on_init() {
                 next_vmc_kd = param.as_double();
             } else if (param.get_name() == "body_width") {
                 next_body_width = param.as_double();
+            } else if (param.get_name() == "base_link_com_height") {
+                next_base_link_com_height = param.as_double();
+            } else if (param.get_name() == "centrifugal_accel_filter_alpha") {
+                next_centrifugal_accel_filter_alpha = param.as_double();
+            } else if (param.get_name() == "centrifugal_force_ff_gain") {
+                next_centrifugal_force_ff_gain = param.as_double();
+            } else if (param.get_name() == "centrifugal_force_ff_limit") {
+                next_centrifugal_force_ff_limit = param.as_double();
             } else if (param.get_name() == "leg_exp_length") {
                 next_leg_exp_length = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kp") {
@@ -256,6 +277,10 @@ controller_interface::CallbackReturn LQRController::on_init() {
         vmc_kp             = next_vmc_kp;
         vmc_kd             = next_vmc_kd;
         body_width_        = next_body_width;
+        base_link_com_height_ = next_base_link_com_height;
+        centrifugal_accel_filter_alpha_ = next_centrifugal_accel_filter_alpha;
+        centrifugal_force_ff_gain_ = next_centrifugal_force_ff_gain;
+        centrifugal_force_ff_limit_ = next_centrifugal_force_ff_limit;
         leg_exp_length     = next_leg_exp_length;
         leg_angle_diff_kp_ = next_leg_diff_kp;
         leg_angle_diff_kd_ = next_leg_diff_kd;
@@ -358,6 +383,10 @@ controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_li
     vmc_kp                = get_node()->get_parameter("vmc_kp").as_double();
     vmc_kd                = get_node()->get_parameter("vmc_kd").as_double();
     body_width_           = get_node()->get_parameter("body_width").as_double();
+    base_link_com_height_ = get_node()->get_parameter("base_link_com_height").as_double();
+    centrifugal_accel_filter_alpha_ = get_node()->get_parameter("centrifugal_accel_filter_alpha").as_double();
+    centrifugal_force_ff_gain_ = get_node()->get_parameter("centrifugal_force_ff_gain").as_double();
+    centrifugal_force_ff_limit_ = get_node()->get_parameter("centrifugal_force_ff_limit").as_double();
     leg_exp_length        = get_node()->get_parameter("leg_exp_length").as_double();
     leg_angle_diff_kp_    = get_node()->get_parameter("leg_angle_diff_kp").as_double();
     leg_angle_diff_kd_    = get_node()->get_parameter("leg_angle_diff_kd").as_double();
@@ -386,6 +415,8 @@ controller_interface::CallbackReturn LQRController::on_activate(const rclcpp_lif
 
     state_velocity_filtered_.fill(0.0);
     state_velocity_filter_initialized_.fill(false);
+    lateral_accel_filtered_ = 0.0;
+    lateral_accel_filter_initialized_ = false;
     wheel_spin_error_integral_ = 0.0;
 
     return controller_interface::CallbackReturn::SUCCESS;
@@ -464,7 +495,16 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     q.normalize();
     const double pitch = normalized_zyx_pitch(q);
     const double roll  = normalized_zyx_roll(q);
+    const double yaw   = normalized_zyx_yaw(q);
     // RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
+
+    const Eigen::Vector3d imu_accel(
+        imu_state_.linear_acceleration.x, imu_state_.linear_acceleration.y, imu_state_.linear_acceleration.z);
+    const Eigen::Matrix3d body_to_world = q.toRotationMatrix();
+    const Eigen::Matrix3d level_to_world = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    const Eigen::Vector3d level_accel = level_to_world.transpose() * body_to_world * imu_accel;
+    const double lateral_accel = low_pass_filter(
+        level_accel.y(), centrifugal_accel_filter_alpha_, lateral_accel_filtered_, lateral_accel_filter_initialized_);
 
     // 提取等效摆的角度和长度
     Eigen::Vector2d left_joint_pos(robot_state_.l1.rad, robot_state_.l2.rad), left_leg_pos(0.0, 0.0);
@@ -576,8 +616,20 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     right_leg_exp_length = leg_exp_length - 0.5 * leg_length_diff;
 
     double vmc_mass_component=state==2?(kBaselinkMass*0.5*9.8*cos(theta)):0.0;
+    const double com_height = average_leg_length + kWheelRadius + base_link_com_height_;
+    const double centrifugal_force_ff_raw =
+        state == 2 ? centrifugal_force_ff_gain_ * kBaselinkMass * lateral_accel * com_height / safe_body_width : 0.0;
+    const double centrifugal_force_ff_limit = std::max(0.0, centrifugal_force_ff_limit_);
+    const double centrifugal_force_ff = std::clamp(
+        centrifugal_force_ff_raw, -centrifugal_force_ff_limit, centrifugal_force_ff_limit);
     double left_leg_dis_vmc_T           = vmc_kp * (left_leg_exp_length - left_leg_pos[0]) - vmc_kd * left_leg_vel[0]+vmc_mass_component;
     double right_leg_dis_vmc_T          = vmc_kp * (right_leg_exp_length - right_leg_pos[0]) - vmc_kd * right_leg_vel[0]+vmc_mass_component;
+    if(state==2)
+    {
+        left_leg_dis_vmc_T -= centrifugal_force_ff;
+        right_leg_dis_vmc_T += centrifugal_force_ff;
+    }
+    
     const double leg_angle_diff         = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
     const double leg_angle_diff_vel     = left_leg_vel[1] - right_leg_vel[1];
     const double spin_omega             = imu_state_.angular_velocity.z;
@@ -614,9 +666,10 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
     RCLCPP_INFO_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 100,
-        "state=%d\npos=%.4f\nroll=%.4f\nleg_roll=%.4f\ncombined_roll=%.4f\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)\nexp_length=(%.4f,%.4f)",
-        state, x, roll, leg_height_roll, combined_roll, left_leg_force[0], right_leg_force[0],u[0], u[1],left_leg_pos[0],right_leg_pos[0],
-        left_leg_exp_length, right_leg_exp_length);
+        "state=%d\npos=%.4f\nroll=%.4f\nleg_roll=%.4f\ncombined_roll=%.4f\nay=%.4f\nay_raw=%.4f\ncentrifugal_ff=%.4f\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)\nexp_length=(%.4f,%.4f)",
+        state, x, roll, leg_height_roll, combined_roll, lateral_accel, level_accel.y(), centrifugal_force_ff,
+        left_leg_force[0], right_leg_force[0],u[0], u[1],left_leg_pos[0],right_leg_pos[0], left_leg_exp_length,
+        right_leg_exp_length);
 }
 
 void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {
