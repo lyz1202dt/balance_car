@@ -633,12 +633,12 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         exp_X.setZero();
 
         if(exp_x-x>5.0)         //防止x数值爆炸
-            exp_x=x+5.0;
+            exp_X[0]=x+5.0;
         else if(exp_x-x<-5.0)
-            exp_x=x-5.0;
-
+            exp_X[0]=x-5.0;
+        else
+            exp_X[0]=exp_x;
         
-        exp_X[0]=exp_x;
         X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
 
         lqr_gain_mutex_.lock();
