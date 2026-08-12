@@ -638,7 +638,7 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
             exp_X[0]=x-5.0;
         else
             exp_X[0]=exp_x;
-        
+
         X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
 
         lqr_gain_mutex_.lock();
@@ -725,8 +725,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
     RCLCPP_INFO_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 100,
-        "state=%d\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\n",
-        state, left_leg_force[0], right_leg_force[0],u[0], u[1]);
+        "state=%d\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)",
+        state, left_leg_force[0], right_leg_force[0],u[0], u[1],left_leg_pos[0],right_leg_pos[0]);
 }
 
 void LQRController::imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg) {
