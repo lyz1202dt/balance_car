@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
+#include <Eigen/Eigenvalues>
+#include <mutex>
 #include <rclcpp/logging.hpp>
 #include <stdexcept>
 #include <string>
@@ -24,6 +27,8 @@ namespace {
 
 constexpr size_t kMotorCount                                    = 6;
 constexpr size_t kTargetInterfacesPerMotor                      = 5;
+constexpr size_t kLqrStateSize                                  = 6;
+constexpr size_t kLqrInputSize                                  = 2;
 constexpr const char* kReferencePrefix                          = "mujoco_sim_controller";
 constexpr const char* kStateTopic                               = "robot_state";
 constexpr const char* kTargetTopic                              = "robot_target";
@@ -39,6 +44,8 @@ constexpr std::array<const char*, 3> kStateInterfaceNames                       
 constexpr std::array<const char*, kTargetInterfacesPerMotor> kTargetInterfaceNames = {
     "position", "velocity", "effort", "kp", "kd",
 };
+constexpr std::array<double, kLqrStateSize> kDefaultQDiag = {10.0, 400.0, 100.0, 40.0, 600.0, 50.0};
+constexpr std::array<double, kLqrInputSize> kDefaultRDiag = {8.0, 0.5};
 
 robot_interfaces::msg::MotorState& motor_state_at(robot_interfaces::msg::RobotState& msg, const size_t index) {
     switch (index) {
@@ -118,6 +125,82 @@ std::string motor_command_interface_name(const size_t motor_index, const size_t 
     return joint_interface;
 }
 
+template <size_t N>
+std::vector<double> array_to_vector(const std::array<double, N>& values) {
+    return std::vector<double>(values.begin(), values.end());
+}
+
+bool parameter_to_double_vector(const rclcpp::Parameter& param, std::vector<double>& values, std::string& error) {
+    if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
+        values = param.as_double_array();
+        return true;
+    }
+    if (param.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER_ARRAY) {
+        const auto int_values = param.as_integer_array();
+        values.clear();
+        values.reserve(int_values.size());
+        for (const auto value : int_values) {
+            values.push_back(static_cast<double>(value));
+        }
+        return true;
+    }
+
+    error = param.get_name() + " must be a numeric array";
+    return false;
+}
+
+template <size_t N>
+bool parse_diag_values(
+    const std::vector<double>& values,
+    const char* name,
+    const bool strictly_positive,
+    std::array<double, N>& diag,
+    std::string& error) {
+    if (values.size() != N) {
+        error = std::string(name) + " must contain exactly " + std::to_string(N) + " values";
+        return false;
+    }
+
+    for (size_t i = 0; i < N; ++i) {
+        const double value = values[i];
+        if (!std::isfinite(value)) {
+            error = std::string(name) + " contains a non-finite value at index " + std::to_string(i);
+            return false;
+        }
+        if (strictly_positive) {
+            if (value <= 0.0) {
+                error = std::string(name) + " values must be greater than 0";
+                return false;
+            }
+        } else if (value < 0.0) {
+            error = std::string(name) + " values must be greater than or equal to 0";
+            return false;
+        }
+        diag[i] = value;
+    }
+    return true;
+}
+
+template <size_t N>
+bool get_diag_parameter(
+    const rclcpp_lifecycle::LifecycleNode::SharedPtr& node,
+    const char* name,
+    const bool strictly_positive,
+    std::array<double, N>& diag,
+    std::string& error) {
+    rclcpp::Parameter param;
+    if (!node->get_parameter(name, param)) {
+        error = std::string("Missing parameter ") + name;
+        return false;
+    }
+
+    std::vector<double> values;
+    if (!parameter_to_double_vector(param, values, error)) {
+        return false;
+    }
+    return parse_diag_values(values, name, strictly_positive, diag, error);
+}
+
 } // namespace
 
 LQRController::LQRController()
@@ -134,52 +217,217 @@ controller_interface::CallbackReturn LQRController::on_init() {
     auto_declare<double>("leg_angle_diff_kd", leg_angle_diff_kd_);
     auto_declare<double>("wheel_diff_kp", wheel_diff_kp_);
     auto_declare<double>("wheel_diff_kd", wheel_diff_kd_);
+    auto_declare<std::vector<double>>("q_diag", array_to_vector(kDefaultQDiag));
+    auto_declare<std::vector<double>>("r_diag", array_to_vector(kDefaultRDiag));
     
     node->declare_parameter<int>("state",2);
+
+    std::string error;
+    if (!get_diag_parameter(node, "q_diag", false, q_diag_, error) || !get_diag_parameter(node, "r_diag", true, r_diag_, error)) {
+        RCLCPP_ERROR(node->get_logger(), "Invalid LQR parameters: %s", error.c_str());
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
+    Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> initial_gain;
+    if (!solve_lqr_gain(q_diag_, r_diag_, initial_gain, error)) {
+        RCLCPP_ERROR(node->get_logger(), "Failed to solve initial Riccati equation: %s", error.c_str());
+        return controller_interface::CallbackReturn::ERROR;
+    }
+    {
+        std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
+        K = initial_gain;
+    }
 
     param_cb_ = node->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& params) {
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
+
+        auto next_q_diag              = q_diag_;
+        auto next_r_diag              = r_diag_;
+        double next_torque_limit      = torque_limit_;
+        double next_leg_diff_kp       = leg_angle_diff_kp_;
+        double next_leg_diff_kd       = leg_angle_diff_kd_;
+        double next_wheel_diff_kp     = wheel_diff_kp_;
+        double next_wheel_diff_kd     = wheel_diff_kd_;
+        int next_state                = state;
+        bool should_update_lqr_gain   = false;
+        std::string error;
+
         for (const auto& param : params) {
             if (param.get_name() == "torque_limit") {
-                torque_limit_ = param.as_double();
+                next_torque_limit = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kp") {
-                leg_angle_diff_kp_ = param.as_double();
+                next_leg_diff_kp = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kd") {
-                leg_angle_diff_kd_ = param.as_double();
+                next_leg_diff_kd = param.as_double();
             } else if (param.get_name() == "wheel_diff_kp") {
-                wheel_diff_kp_ = param.as_double();
+                next_wheel_diff_kp = param.as_double();
             } else if (param.get_name() == "wheel_diff_kd") {
-                wheel_diff_kd_ = param.as_double();
-            }else if(param.get_name()=="state")
-                state=param.as_int();
+                next_wheel_diff_kd = param.as_double();
+            } else if (param.get_name() == "state") {
+                next_state = param.as_int();
+            } else if (param.get_name() == "q_diag" || param.get_name() == "r_diag") {
+                std::vector<double> values;
+                if (!parameter_to_double_vector(param, values, error)) {
+                    result.successful = false;
+                    result.reason     = error;
+                    return result;
+                }
+
+                if (param.get_name() == "q_diag") {
+                    if (!parse_diag_values(values, "q_diag", false, next_q_diag, error)) {
+                        result.successful = false;
+                        result.reason     = error;
+                        return result;
+                    }
+                } else if (!parse_diag_values(values, "r_diag", true, next_r_diag, error)) {
+                    result.successful = false;
+                    result.reason     = error;
+                    return result;
+                }
+                should_update_lqr_gain = true;
+            }
+        }
+
+        Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> next_gain;
+        if (should_update_lqr_gain && !solve_lqr_gain(next_q_diag, next_r_diag, next_gain, error)) {
+            result.successful = false;
+            result.reason     = error;
+            return result;
+        }
+
+        torque_limit_      = next_torque_limit;
+        leg_angle_diff_kp_ = next_leg_diff_kp;
+        leg_angle_diff_kd_ = next_leg_diff_kd;
+        wheel_diff_kp_    = next_wheel_diff_kp;
+        wheel_diff_kd_    = next_wheel_diff_kd;
+        state             = next_state;
+
+        if (should_update_lqr_gain) {
+            q_diag_ = next_q_diag;
+            r_diag_ = next_r_diag;
+            {
+                std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
+                K = next_gain;
+            }
+            RCLCPP_INFO(
+                get_node()->get_logger(),
+                "Updated LQR gain K: [%.4f %.4f %.4f %.4f %.4f %.4f; %.4f %.4f %.4f %.4f %.4f %.4f]",
+                next_gain(0, 0), next_gain(0, 1), next_gain(0, 2), next_gain(0, 3), next_gain(0, 4), next_gain(0, 5),
+                next_gain(1, 0), next_gain(1, 1), next_gain(1, 2), next_gain(1, 3), next_gain(1, 4), next_gain(1, 5));
         }
         return result;
     });
 
-    // K << -4.6268,-8.0844, -24.6683, -4.9583, 10.1850,2.3943,
-    //    -0.6659, -1.0701, -2.3789, -0.6645, 45.9975, 9.1358;
-
-    // K << -4.6154,-16.7008, -36.6794, -8.1138, 18.1813 , 4.7983,
-    //    -0.5275, -1.9300, -3.6767, -1.0011, 31.9915, 9.7188;
-
-    K << -4.4542,-16.1413, -35.7099, -7.8923, 29.1901, 4.5060,
-       1.1469, 4.0351, 7.6476, 1.5702, 79.1527, 2.4197;
-
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-bool LQRController::update_K(float leg_length)
-{
-    const double a[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};     //三次多项式拟合K矩阵
-    const double b[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
-    const double c[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
-    const double d[2][6]={{0.0,0.0,0.0,0.0},{0.0,0.0,0.0,0.0}};
+bool LQRController::solve_lqr_gain(
+    const std::array<double, 6>& q_diag,
+    const std::array<double, 2>& r_diag,
+    Eigen::Matrix<double, 2, 6>& gain,
+    std::string& error) const {
+    using Matrix6d   = Eigen::Matrix<double, kLqrStateSize, kLqrStateSize>;
+    using Matrix62d  = Eigen::Matrix<double, kLqrStateSize, kLqrInputSize>;
+    using Matrix2d   = Eigen::Matrix<double, kLqrInputSize, kLqrInputSize>;
+    using Matrix12d  = Eigen::Matrix<double, 2 * kLqrStateSize, 2 * kLqrStateSize>;
+    using Matrix6cd  = Eigen::Matrix<std::complex<double>, kLqrStateSize, kLqrStateSize>;
 
-    for(int i=0;i<6;i++)    //计算K
-    {
-        K[i]=a[0][i]+b[0][i]*leg_length+c[0][i]*leg_length*leg_length+d[0][i]*leg_length*leg_length*leg_length;
-        K[i+6]=a[1][i]+b[1][i]*leg_length+c[1][i]*leg_length*leg_length+d[1][i]*leg_length*leg_length*leg_length;
+    Matrix6d A;
+    A << 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, -13.9285, 0.0, 0.6373, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 98.2488, 0.0, 17.6903, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        0.0, 0.0, 44.9938, 0.0, 54.3689, 0.0;
+
+    Matrix62d B;
+    B << 0.0, 0.0,
+        15.4595, -3.3942,
+        0.0, 0.0,
+        -65.5078, 39.5039,
+        0.0, 0.0,
+        -7.9383, 50.5446;
+
+    Matrix6d Q = Matrix6d::Zero();
+    for (size_t i = 0; i < kLqrStateSize; ++i) {
+        Q(i, i) = q_diag[i];
+    }
+
+    Matrix2d R_inv = Matrix2d::Zero();
+    for (size_t i = 0; i < kLqrInputSize; ++i) {
+        if (r_diag[i] <= 0.0 || !std::isfinite(r_diag[i])) {
+            error = "r_diag values must be finite and greater than 0";
+            return false;
+        }
+        R_inv(i, i) = 1.0 / r_diag[i];
+    }
+
+    Matrix12d H = Matrix12d::Zero();
+    H.template block<kLqrStateSize, kLqrStateSize>(0, 0)                           = A;
+    H.template block<kLqrStateSize, kLqrStateSize>(0, kLqrStateSize)               = -B * R_inv * B.transpose();
+    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, 0)               = -Q;
+    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, kLqrStateSize)   = -A.transpose();
+
+    Eigen::ComplexEigenSolver<Matrix12d> eigen_solver(H);
+    if (eigen_solver.info() != Eigen::Success) {
+        error = "Hamiltonian eigen decomposition failed";
+        return false;
+    }
+
+    const auto eigenvalues  = eigen_solver.eigenvalues();
+    const auto eigenvectors = eigen_solver.eigenvectors();
+    std::array<int, kLqrStateSize> stable_indices{};
+    size_t stable_count = 0;
+    for (int i = 0; i < eigenvalues.size(); ++i) {
+        if (eigenvalues[i].real() < -1.0e-8) {
+            if (stable_count >= stable_indices.size()) {
+                error = "Riccati Hamiltonian has too many stable eigenvalues";
+                return false;
+            }
+            stable_indices[stable_count++] = i;
+        }
+    }
+
+    if (stable_count != kLqrStateSize) {
+        error = "Riccati Hamiltonian did not provide a 6-dimensional stable subspace";
+        return false;
+    }
+
+    Matrix6cd U1;
+    Matrix6cd U2;
+    for (size_t col = 0; col < kLqrStateSize; ++col) {
+        U1.col(col) = eigenvectors.template block<kLqrStateSize, 1>(0, stable_indices[col]);
+        U2.col(col) = eigenvectors.template block<kLqrStateSize, 1>(kLqrStateSize, stable_indices[col]);
+    }
+
+    const auto U1_decomposition = U1.fullPivLu();
+    if (!U1_decomposition.isInvertible()) {
+        error = "Riccati stable subspace is singular";
+        return false;
+    }
+
+    const Matrix6cd P_complex = U2 * U1.inverse();
+    const double max_imag     = P_complex.imag().cwiseAbs().maxCoeff();
+    if (max_imag > 1.0e-5) {
+        error = "Riccati solution has a significant imaginary component";
+        return false;
+    }
+
+    Matrix6d P = P_complex.real();
+    P          = 0.5 * (P + P.transpose());
+
+    gain = R_inv * B.transpose() * P;
+    if (!gain.allFinite()) {
+        error = "Computed LQR gain contains a non-finite value";
+        return false;
+    }
+
+    const Matrix6d residual = A.transpose() * P + P * A - P * B * R_inv * B.transpose() * P + Q;
+    const double scale      = 1.0 + Q.norm() + A.norm() * P.norm() + (P * B * R_inv * B.transpose() * P).norm();
+    if (!std::isfinite(residual.norm()) || residual.norm() > 1.0e-6 * scale) {
+        error = "Riccati residual check failed";
+        return false;
     }
 
     return true;
@@ -333,17 +581,22 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     Eigen::Vector<double, 6> X, exp_X;                                          // X<<fai取反为fai，theta为正，轮子方向正确。fai+theta=rad
     exp_X.setZero();
     
-    exp_X[0] = exp_x;
+    exp_X[0] = exp_x=x;
     
 
     X << x, dx, theta, dtheta, phi, dphi;                                       // 填写当前状态向量
-    u = K * (exp_X - X);                                                        // 计算得到控制量u
+    Eigen::Matrix<double, 2, 6> K_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
+        K_snapshot = K;
+    }
+    u = K_snapshot * (exp_X - X);                                               // 计算得到控制量u
 
     // u.setZero();
 
     // 腿长VMC部分，计算关节为了维持当前腿长所需要施加的力矩
-    double left_leg_dis_vmc_T           = vmc_kp * (0.30 - left_leg_pos[0]) - vmc_kd * left_leg_vel[0];
-    double right_leg_dis_vmc_T          = vmc_kp * (0.30 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0];
+    double left_leg_dis_vmc_T           = vmc_kp * (0.3 - left_leg_pos[0]) - vmc_kd * left_leg_vel[0];
+    double right_leg_dis_vmc_T          = vmc_kp * (0.3 - right_leg_pos[0]) - vmc_kd * right_leg_vel[0];
     const double leg_angle_diff         = normalize_angle(left_leg_pos[1] - right_leg_pos[1]);
     const double leg_angle_diff_vel     = left_leg_vel[1] - right_leg_vel[1];
     const double leg_angle_sync_torque  = -leg_angle_diff_kp_ * leg_angle_diff - leg_angle_diff_kd_ * leg_angle_diff_vel;

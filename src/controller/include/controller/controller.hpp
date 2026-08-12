@@ -3,6 +3,7 @@
 #include "tools/leg_calc.hpp"
 #include <Eigen/src/Core/Matrix.h>
 #include <array>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -62,15 +63,22 @@ private:
 
 
     //LQR自动控制相关
-    bool update_K(float leg_length);
+    bool solve_lqr_gain(
+        const std::array<double, 6>& q_diag,
+        const std::array<double, 2>& r_diag,
+        Eigen::Matrix<double, 2, 6>& gain,
+        std::string& error) const;
     LegCalc leg;
     int state{2}; 
     Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
+    mutable std::mutex lqr_gain_mutex_;
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};
+    std::array<double, 6> q_diag_{{10.0, 400.0, 100.0, 40.0, 600.0, 50.0}};
+    std::array<double, 2> r_diag_{{8.0, 0.5}};
 
-    double vmc_kp{500.0};
-    double vmc_kd{80.0};
+    double vmc_kp{300.0};
+    double vmc_kd{40.0};
     double leg_angle_diff_kp_{30.0};
     double leg_angle_diff_kd_{4.0};
     double wheel_diff_kp_{0.0};
