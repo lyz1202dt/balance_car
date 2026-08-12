@@ -1,10 +1,9 @@
 #pragma once
 
 #include "tools/leg_calc.hpp"
-#include <Eigen/src/Core/Matrix.h>
 #include <array>
-#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <controller_interface/controller_interface.hpp>
@@ -21,6 +20,9 @@
 #include <Eigen/Dense>
 
 namespace lqr_controller {
+
+using LqrGainMatrix = Eigen::Matrix<double, 2, 6>;
+using KTableEntry = std::pair<double, LqrGainMatrix>;
 
 class LQRController : public controller_interface::ControllerInterface {
 public:
@@ -63,22 +65,18 @@ private:
 
 
     //LQR自动控制相关
-    bool solve_lqr_gain(
-        const std::array<double, 6>& q_diag,
-        const std::array<double, 2>& r_diag,
-        Eigen::Matrix<double, 2, 6>& gain,
-        std::string& error) const;
-    LegCalc leg;
     int state{1};
     rclcpp::Time last_state_switch_time;
-    Eigen::Matrix<double,2,6> K;    //K矩阵（控制反馈增益矩阵）
-    Eigen::Matrix<double,2,6> air_K;
-    mutable std::mutex lqr_gain_mutex_;
+
+    bool load_K_table(std::string& error);
+    bool update_K(double leg_length);
+    LegCalc leg;
+    std::vector<KTableEntry> k_table_;
+    LqrGainMatrix K;                //K矩阵（控制反馈增益矩阵）
+    LqrGainMatrix air_K;
     Eigen::Vector2d u;              //控制向量
     double exp_x{0.0};              //期望位置
     double exp_omega{0.0};          //期望自旋角速度
-    std::array<double, 6> q_diag_{{10.0, 400.0, 100.0, 40.0, 600.0, 50.0}};
-    std::array<double, 2> r_diag_{{8.0, 0.5}};
 
     double vmc_kp{600.0};
     double vmc_kd{40.0};
