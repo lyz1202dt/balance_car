@@ -39,8 +39,6 @@ constexpr std::array<const char*, kMotorCount> kMotorJointNames = {
     "left_front_hip_joint", "left_rear_hip_joint", "left_wheel_joint", "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
 };
 
-double clamp_unit(const double value) { return std::clamp(value, -1.0, 1.0); }
-
 double normalize_angle(const double value) {
     double angle = value;
     while (angle > M_PI) {
@@ -50,21 +48,6 @@ double normalize_angle(const double value) {
         angle += 2.0 * M_PI;
     }
     return angle;
-}
-
-double normalized_zyx_pitch(const Eigen::Quaterniond& q) {
-    const Eigen::Matrix3d rotation = q.toRotationMatrix();
-    return std::asin(clamp_unit(-rotation(2, 0)));
-}
-
-double normalized_zyx_roll(const Eigen::Quaterniond& q) {
-    const Eigen::Matrix3d rotation = q.toRotationMatrix();
-    return std::atan2(rotation(2, 1), rotation(2, 2));
-}
-
-double normalized_zyx_yaw(const Eigen::Quaterniond& q) {
-    const Eigen::Matrix3d rotation = q.toRotationMatrix();
-    return std::atan2(rotation(1, 0), rotation(0, 0));
 }
 
 double low_pass_filter(const double input, const double alpha, double& filtered_value, bool& initialized) {
@@ -83,7 +66,14 @@ double low_pass_filter(const double input, const double alpha, double& filtered_
     return filtered_value;
 }
 
-bool parameter_to_double_vector(const rclcpp::Parameter& param, std::vector<double>& values, std::string& error) {
+bool get_numeric_array_parameter(
+    const rclcpp_lifecycle::LifecycleNode::SharedPtr& node, const char* name, std::vector<double>& values, std::string& error) {
+    rclcpp::Parameter param;
+    if (!node->get_parameter(name, param)) {
+        error = std::string("Missing parameter ") + name;
+        return false;
+    }
+
     if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) {
         values = param.as_double_array();
         return true;
@@ -102,28 +92,14 @@ bool parameter_to_double_vector(const rclcpp::Parameter& param, std::vector<doub
     return false;
 }
 
-bool get_numeric_array_parameter(
-    const rclcpp_lifecycle::LifecycleNode::SharedPtr& node, const char* name, std::vector<double>& values, std::string& error) {
-    rclcpp::Parameter param;
-    if (!node->get_parameter(name, param)) {
-        error = std::string("Missing parameter ") + name;
-        return false;
-    }
-
-    return parameter_to_double_vector(param, values, error);
-}
-
 } // namespace
 
 LQRController::LQRController()
     : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {
     imu_state_.orientation.w = 1.0;
-    initialize_motor_interface_map();
-}
 
-void LQRController::initialize_motor_interface_map() {
+
     motor_interface_map_.clear();
-
     const std::array<std::tuple<const char*, robot_interfaces::msg::MotorState*, robot_interfaces::msg::MotorTarget*>, kMotorCount>
         bindings = {
             {
@@ -135,7 +111,6 @@ void LQRController::initialize_motor_interface_map() {
              {kMotorJointNames[5], &robot_state_.rw, &robot_target_.rw},
              }
     };
-
     for (size_t motor_index = 0; motor_index < bindings.size(); ++motor_index) {
         const auto& [joint_name, state, target] = bindings[motor_index];
         motor_interface_map_.emplace(
@@ -149,10 +124,6 @@ void LQRController::initialize_motor_interface_map() {
                                     motor_index * kTargetInterfacesPerMotor + 4},
         });
     }
-}
-
-void LQRController::update_controller_parameters() {
-    load_balance_controller_parameters(get_node(), params_);
 }
 
 controller_interface::CallbackReturn LQRController::on_init() {
@@ -193,7 +164,7 @@ controller_interface::CallbackReturn LQRController::on_init() {
 controller_interface::CallbackReturn LQRController::on_configure(const rclcpp_lifecycle::State& previous_state) {
     (void)previous_state;
 
-    update_controller_parameters();
+    load_balance_controller_parameters(get_node(), params_);
 
     robot_exp_vel_subscriber_ = get_node()->create_subscription<geometry_msgs::msg::Twist>(
         "cmd_vel", 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
@@ -237,17 +208,17 @@ controller_interface::CallbackReturn LQRController::on_deactivate(const rclcpp_l
 controller_interface::return_type LQRController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
     for (auto& [joint_name, binding] : motor_interface_map_) {
         const auto& indices = binding.state_interface_indices;
-        auto& state  = binding.state.get();
-        state.rad    = static_cast<float>(state_interfaces_[indices[0]].get_value());
-        state.omega  = static_cast<float>(state_interfaces_[indices[1]].get_value());
-        state.torque = static_cast<float>(state_interfaces_[indices[2]].get_value());
+        auto& state         = binding.state.get();
+        state.rad           = static_cast<float>(state_interfaces_[indices[0]].get_value());
+        state.omega         = static_cast<float>(state_interfaces_[indices[1]].get_value());
+        state.torque        = static_cast<float>(state_interfaces_[indices[2]].get_value());
     }
 
     update_motor_commands(time, period);
 
     for (auto& [joint_name, binding] : motor_interface_map_) {
         const auto& indices = binding.command_interface_indices;
-        const auto& target = binding.target.get();
+        const auto& target  = binding.target.get();
         command_interfaces_[indices[0]].set_value(static_cast<double>(target.rad));
         command_interfaces_[indices[1]].set_value(static_cast<double>(target.omega));
         command_interfaces_[indices[2]].set_value(static_cast<double>(target.torque));
@@ -263,20 +234,22 @@ controller_interface::return_type LQRController::update(const rclcpp::Time& time
 void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp::Duration& period) {
     Eigen::Vector2d u;
 
-    // 提取机体 pitch。Eigen::eulerAngles(2, 1, 0) 可能把接近直立的姿态表示成 pitch 接近 pi。
+    // 提取机体姿态，Eigen 返回顺序为 [yaw, pitch, roll]。
     Eigen::Quaterniond q;
     q.w() = imu_state_.orientation.w;
     q.x() = imu_state_.orientation.x;
     q.y() = imu_state_.orientation.y;
     q.z() = imu_state_.orientation.z;
     q.normalize();
-    const double pitch = normalized_zyx_pitch(q);
-    const double roll  = normalized_zyx_roll(q);
-    const double yaw   = normalized_zyx_yaw(q);
+    const Eigen::Matrix3d R   = q.toRotationMatrix();
+    const Eigen::Vector3d ypr = R.eulerAngles(2, 1, 0);
+    const double yaw          = ypr[0];
+    const double pitch        = ypr[1];
+    const double roll         = ypr[2];
     // RCLCPP_INFO_THROTTLE(get_node()->get_logger(),*get_node()->get_clock(),100,"(r=%.4f,p=%.4f,y=%.4f)",rpy[0],rpy[1],rpy[2]);
 
     const Eigen::Vector3d imu_accel(imu_state_.linear_acceleration.x, imu_state_.linear_acceleration.y, imu_state_.linear_acceleration.z);
-    const Eigen::Matrix3d body_to_world  = q.toRotationMatrix();
+    const Eigen::Matrix3d body_to_world  = R;
     const Eigen::Matrix3d level_to_world = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
     const Eigen::Vector3d level_accel    = level_to_world.transpose() * body_to_world * imu_accel;
     const double lateral_accel           = low_pass_filter(
@@ -382,8 +355,8 @@ void LQRController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     const double combined_roll   = normalize_angle(roll + leg_height_roll);
     const double roll_error      = normalize_angle(exp_roll - combined_roll);
     const double leg_length_diff = safe_body_width * std::tan(roll_error);
-    left_leg_exp_length          = params_.leg_exp_length + 0.5 * leg_length_diff;
-    right_leg_exp_length         = params_.leg_exp_length - 0.5 * leg_length_diff;
+    double left_leg_exp_length   = std::clamp(params_.leg_exp_length + 0.5 * leg_length_diff, 0.19, 0.34);
+    double right_leg_exp_length  = std::clamp(params_.leg_exp_length - 0.5 * leg_length_diff, 0.19, 0.34);
 
     double vmc_mass_component = state == 2 ? (kBaselinkMass * 0.5 * 9.8 * cos(theta)) : 0.0;
     const double com_height   = average_leg_length + kWheelRadius + params_.base_link_com_height;

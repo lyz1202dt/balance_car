@@ -52,11 +52,9 @@ private:
         std::array<size_t, kTargetInterfacesPerMotor> command_interface_indices;
     };
 
-    void initialize_motor_interface_map();
     void update_motor_commands(const rclcpp::Time& time,const rclcpp::Duration& period);
     void imu_pose_callback(const geometry_msgs::msg::PoseStamped& msg);
     void imu_callback(const sensor_msgs::msg::Imu& msg);
-    void update_controller_parameters();
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr robot_exp_vel_subscriber_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr imu_pose_subscriber_;
@@ -69,7 +67,7 @@ private:
     geometry_msgs::msg::Twist expected_velocity_;
     std::unordered_map<std::string, MotorInterfaceBinding> motor_interface_map_;
 
-    //LQR自动控制相关
+    //控制器参数
     BalanceControllerParams params_;
 
     //状态切换
@@ -82,13 +80,9 @@ private:
     double exp_roll{0.0};
     
 
+    //ROLL轴腿长控制
     LegCalc leg;
     LqrGainScheduler gain_scheduler_;
-    
-
-    //ROLL轴腿长控制
-    double left_leg_exp_length{0.28};
-    double right_leg_exp_length{0.28};
     PID left_leg_length_pid_;
     PID right_leg_length_pid_;
     PID leg_angle_diff_pid_;
