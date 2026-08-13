@@ -1,20 +1,30 @@
 #pragma once
 
 
+#include "tools/leg_calc_base.hpp"
+
 #include <cmath>
 #include <Eigen/Dense>
-#include <stdexcept>
 #include <type_traits>
 #include <autodiff/forward/real.hpp>
 #include <autodiff/forward/real/eigen.hpp>
 
-class LegCalc{
+class LegCalc : public LegCalcBase {
 public:
-    LegCalc(const double &l0,const double &l1,const double &l2);
+    LegCalc();
 
     //正运动学，输入{前髋关节角, 后髋关节角}，输出{腿长, 腿角度}，腿竖直向下为0
+    bool forward_kinematics(const Eigen::Vector2d& rad, Eigen::Vector2d& leg) const override;
+
+    //逆运动学，输入{腿长, 腿角度}，输出{前髋关节角, 后髋关节角}，腿竖直向下为0
+    bool inverse_kinematics(const Eigen::Vector2d& leg, Eigen::Vector2d& rad) const override;
+
+protected:
+    Eigen::Matrix2d calc_jacobian(const Eigen::Vector2d& radian) const override;
+
+private:
     template <typename Scalar>
-    bool forward_kinematics(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> &leg) const {
+    bool forward_kinematics_impl(const Eigen::Matrix<Scalar, 2, 1> &rad,Eigen::Matrix<Scalar, 2, 1> &leg) const {
         using Vector2 = Eigen::Matrix<Scalar, 2, 1>;
         using std::atan2;
         using std::cos;
@@ -68,24 +78,6 @@ public:
         leg[1] = atan2(-wheel[0], wheel[1]);
         return true;
     }
-
-    //逆运动学，输入{腿长, 腿角度}，输出{前髋关节角, 后髋关节角}，腿竖直向下为0
-    bool inverse_kinematics(const Eigen::Matrix<double, 2, 1> &leg,Eigen::Matrix<double, 2, 1> &rad) const;
-
-    //正速度映射，输入{前髋关节角, 后髋关节角}和{前髋角速度, 后髋角速度}，输出{腿长速度, 腿角速度}
-    bool forward_velocity(const Eigen::Vector2d &rad,const Eigen::Vector2d &joint_velocity,Eigen::Vector2d &leg_velocity) const;
-
-    //逆速度映射，输入{前髋关节角, 后髋关节角}和{腿长速度, 腿角速度}，输出{前髋角速度, 后髋角速度}
-    bool inverse_velocity(const Eigen::Vector2d &rad,const Eigen::Vector2d &leg_velocity,Eigen::Vector2d &joint_velocity) const;
-
-    //正动力学，输入{t1,t2}，输出{F,T}
-    bool forward_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &torque,Eigen::Vector2d &effort) const;
-    
-    //逆动力学，输入{F,T}，输出{t1,t2}
-    bool inverse_dynamics(const Eigen::Vector2d &rad,const Eigen::Vector2d &effort,Eigen::Vector2d &torque) const;
-    
-private:
-    Eigen::Matrix2d calc_jacobian(const Eigen::Vector2d& radian) const;
 
     double l0,l1,l2;
 };

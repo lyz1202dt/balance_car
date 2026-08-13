@@ -43,10 +43,11 @@ pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
 add_library(lqr_controller SHARED
   src/controller/controller.cpp
   src/controller/controller_params.cpp
+  src/controller/leg_calc.cpp
   src/controller/lqr_gain_scheduler.cpp
   src/controller/mujoco_sim.cpp
   src/controller/real_hardware.cpp
-  src/tools/leg_calc.cpp
+  src/tools/leg_calc_base.cpp
   src/tools/pid.cpp
 )
 

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "controller/controller_params.hpp"
+#include "controller/leg_calc.hpp"
 #include "controller/lqr_gain_scheduler.hpp"
-#include "tools/leg_calc.hpp"
 #include "tools/pid.hpp"
 #include <array>
 #include <functional>

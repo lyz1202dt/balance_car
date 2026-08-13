@@ -27,9 +27,6 @@ namespace {
 
 constexpr size_t kMotorCount             = 6;
 constexpr const char* kReferencePrefix   = "mujoco_sim_controller";
-constexpr double kHipHalfDistance        = 0.11;
-constexpr double kUpperLinkLength        = 0.1844;
-constexpr double kLowerLinkLength        = 0.3130;
 constexpr double kWheelRadius            = 0.1;
 constexpr double kWheelSpinIntegralLimit = 20.0;
 constexpr double kBaselinkMass           = 2.30;
@@ -95,7 +92,7 @@ bool get_numeric_array_parameter(
 } // namespace
 
 LQRController::LQRController()
-    : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {
+    : leg() {
     imu_state_.orientation.w = 1.0;
 
 
