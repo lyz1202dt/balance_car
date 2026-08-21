@@ -1,20 +1,18 @@
 #include <controller/mpc_controller.hpp>
 
-#include <Eigen/Eigenvalues>
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <complex>
 #include <mutex>
 #include <rclcpp/duration.hpp>
 #include <rclcpp/logging.hpp>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
+#include <tinympc/tiny_api.hpp>
 
 #include <pluginlib/class_list_macros.hpp>
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
@@ -29,17 +27,21 @@ namespace {
 
 constexpr size_t kMotorCount                                    = 6;
 constexpr size_t kTargetInterfacesPerMotor                      = 5;
-constexpr size_t kLqrStateSize                                  = 6;
-constexpr size_t kLqrInputSize                                  = 2;
+constexpr size_t kMpcStateSize                                  = 6;
+constexpr size_t kMpcInputSize                                  = 2;
+constexpr int kMpcHorizon                                       = 10;
+constexpr double kMpcDt                                         = 0.002;
+constexpr double kMpcRho                                        = 1.0;
+constexpr int kMpcMaxIter                                       = 50;
+constexpr double kMpcAbsTol                                     = 2.0e-3;
 constexpr const char* kReferencePrefix                          = "mujoco_sim_controller";
-constexpr const char* kStateTopic                               = "robot_state";
-constexpr const char* kTargetTopic                              = "robot_target";
-constexpr const char* kCmdVelTopic                              = "cmd_vel";
 constexpr double kHipHalfDistance                               = 0.11;
 constexpr double kUpperLinkLength                               = 0.1844;
 constexpr double kLowerLinkLength                               = 0.3130;
 constexpr double kWheelRadius                                   = 0.1;
 constexpr double kWheelSpinIntegralLimit                        = 20.0;
+constexpr double kAirThetaKp                                    = 6.5;
+constexpr double kAirThetaKd                                    = 2.8;
 constexpr std::array<const char*, kMotorCount> kMotorJointNames = {
     "left_front_hip_joint", "left_rear_hip_joint", "left_wheel_joint", "right_front_hip_joint", "right_rear_hip_joint", "right_wheel_joint",
 };
@@ -47,8 +49,10 @@ constexpr std::array<const char*, 3> kStateInterfaceNames                       
 constexpr std::array<const char*, kTargetInterfacesPerMotor> kTargetInterfaceNames = {
     "position", "velocity", "effort", "kp", "kd",
 };
-constexpr std::array<double, kLqrStateSize> kDefaultQDiag = {10.0, 400.0, 100.0, 40.0, 600.0, 50.0};
-constexpr std::array<double, kLqrInputSize> kDefaultRDiag = {8.0, 0.5};
+constexpr std::array<double, kMpcStateSize> kDefaultQDiag = {10.0, 400.0, 100.0, 40.0, 600.0, 50.0};
+constexpr std::array<double, kMpcInputSize> kDefaultRDiag = {8.0, 0.5};
+
+using MpcStateVector = Eigen::Matrix<double, kMpcStateSize, 1>;
 
 robot_interfaces::msg::MotorState& motor_state_at(robot_interfaces::msg::RobotState& msg, const size_t index) {
     switch (index) {
@@ -197,14 +201,27 @@ bool get_diag_parameter(
     return parse_diag_values(values, name, strictly_positive, diag, error);
 }
 
+void delete_tiny_solver(TinySolver* solver) {
+    if (solver == nullptr) {
+        return;
+    }
+
+    delete solver->solution;
+    delete solver->settings;
+    delete solver->cache;
+    delete solver->work;
+    delete solver;
+}
+
 } // namespace
 
 MPCController::MPCController()
     : leg(kHipHalfDistance, kUpperLinkLength, kLowerLinkLength) {
     imu_state_.orientation.w = 1.0;
-    air_K.setZero();
-    K.setZero();
+    u.setZero();
 }
+
+MPCController::~MPCController() { release_mpc_solver(); }
 
 controller_interface::CallbackReturn MPCController::on_init() {
     auto node = get_node();
@@ -225,20 +242,13 @@ controller_interface::CallbackReturn MPCController::on_init() {
 
     std::string error;
     if (!get_diag_parameter(node, "q_diag", false, q_diag_, error) || !get_diag_parameter(node, "r_diag", true, r_diag_, error)) {
-        RCLCPP_ERROR(node->get_logger(), "Invalid LQR parameters: %s", error.c_str());
+        RCLCPP_ERROR(node->get_logger(), "Invalid MPC parameters: %s", error.c_str());
         return controller_interface::CallbackReturn::ERROR;
     }
 
-    Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> initial_gain;
-    if (!solve_mpc_gain(q_diag_, r_diag_, initial_gain, error)) {
-        RCLCPP_ERROR(node->get_logger(), "Failed to solve initial Riccati equation: %s", error.c_str());
+    if (!configure_mpc_solver(q_diag_, r_diag_, torque_limit_, error)) {
+        RCLCPP_ERROR(node->get_logger(), "Failed to configure TinyMPC solver: %s", error.c_str());
         return controller_interface::CallbackReturn::ERROR;
-    }
-    {
-        std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
-        K           = initial_gain;
-        air_K(1,2)=K(1,2);
-        air_K(1,3)=K(1,3);
     }
 
     last_state_switch_time = get_node()->get_clock()->now();
@@ -255,12 +265,18 @@ controller_interface::CallbackReturn MPCController::on_init() {
         double next_wheel_diff_kp   = wheel_diff_kp_;
         double next_wheel_diff_ki   = wheel_diff_ki_;
         int next_state              = state;
-        bool should_update_lqr_gain = false;
+        bool should_update_mpc_solver = false;
         std::string error;
 
         for (const auto& param : params) {
             if (param.get_name() == "torque_limit") {
                 next_torque_limit = param.as_double();
+                if (!std::isfinite(next_torque_limit) || next_torque_limit <= 0.0) {
+                    result.successful = false;
+                    result.reason     = "torque_limit must be finite and greater than 0";
+                    return result;
+                }
+                should_update_mpc_solver = true;
             } else if (param.get_name() == "leg_angle_diff_kp") {
                 next_leg_diff_kp = param.as_double();
             } else if (param.get_name() == "leg_angle_diff_kd") {
@@ -290,7 +306,7 @@ controller_interface::CallbackReturn MPCController::on_init() {
                     result.reason     = error;
                     return result;
                 }
-                should_update_lqr_gain = true;
+                should_update_mpc_solver = true;
             }
             else if(param.get_name() =="exp_pos")
             {
@@ -302,8 +318,7 @@ controller_interface::CallbackReturn MPCController::on_init() {
             }
         }
 
-        Eigen::Matrix<double, kLqrInputSize, kLqrStateSize> next_gain;
-        if (should_update_lqr_gain && !solve_mpc_gain(next_q_diag, next_r_diag, next_gain, error)) {
+        if (should_update_mpc_solver && !configure_mpc_solver(next_q_diag, next_r_diag, next_torque_limit, error)) {
             result.successful = false;
             result.reason     = error;
             return result;
@@ -316,19 +331,12 @@ controller_interface::CallbackReturn MPCController::on_init() {
         wheel_diff_ki_     = next_wheel_diff_ki;
         state              = next_state;
 
-        if (should_update_lqr_gain) {
+        if (should_update_mpc_solver) {
             q_diag_ = next_q_diag;
             r_diag_ = next_r_diag;
-            {
-                std::lock_guard<std::mutex> lock(lqr_gain_mutex_);
-                K           = next_gain;
-                air_K(1,2)=K(1,2);
-                air_K(1,3)=K(1,3);
-            }
             RCLCPP_INFO(
-                get_node()->get_logger(), "Updated LQR gain K: [%.4f %.4f %.4f %.4f %.4f %.4f; %.4f %.4f %.4f %.4f %.4f %.4f]",
-                next_gain(0, 0), next_gain(0, 1), next_gain(0, 2), next_gain(0, 3), next_gain(0, 4), next_gain(0, 5), next_gain(1, 0),
-                next_gain(1, 1), next_gain(1, 2), next_gain(1, 3), next_gain(1, 4), next_gain(1, 5));
+                get_node()->get_logger(), "Updated TinyMPC weights q=[%.4f %.4f %.4f %.4f %.4f %.4f], r=[%.4f %.4f]",
+                q_diag_[0], q_diag_[1], q_diag_[2], q_diag_[3], q_diag_[4], q_diag_[5], r_diag_[0], r_diag_[1]);
         }
         return result;
     });
@@ -336,112 +344,119 @@ controller_interface::CallbackReturn MPCController::on_init() {
     return controller_interface::CallbackReturn::SUCCESS;
 }
 
-bool MPCController::solve_mpc_gain(
-    const std::array<double, 6>& q_diag, const std::array<double, 2>& r_diag, Eigen::Matrix<double, 2, 6>& gain, std::string& error) const {
-    using Matrix6d  = Eigen::Matrix<double, kLqrStateSize, kLqrStateSize>;
-    using Matrix62d = Eigen::Matrix<double, kLqrStateSize, kLqrInputSize>;
-    using Matrix2d  = Eigen::Matrix<double, kLqrInputSize, kLqrInputSize>;
-    using Matrix12d = Eigen::Matrix<double, 2 * kLqrStateSize, 2 * kLqrStateSize>;
-    using Matrix6cd = Eigen::Matrix<std::complex<double>, kLqrStateSize, kLqrStateSize>;
+bool MPCController::configure_mpc_solver(
+    const std::array<double, 6>& q_diag, const std::array<double, 2>& r_diag, const double input_torque_limit, std::string& error) {
+    if (!std::isfinite(input_torque_limit) || input_torque_limit <= 0.0) {
+        error = "input torque limit must be finite and greater than 0";
+        return false;
+    }
 
-    Matrix6d A;
-    A << 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+    Eigen::Matrix<double, kMpcStateSize, kMpcStateSize> A_cont;
+    A_cont << 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
     0.0, 0.0, -13.9285, 0.0, 0.6373, 0.0,
     0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 98.2488, 0.0, 17.6903, 0.0,
     0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     0.0, 0.0, 44.9938, 0.0, 54.3689, 0.0;
 
-    Matrix62d B;
-    B << 0.0, 0.0,
+    Eigen::Matrix<double, kMpcStateSize, kMpcInputSize> B_cont;
+    B_cont << 0.0, 0.0,
     15.4595, -3.3942,
     0.0, 0.0,
     -65.5078, 39.5039,
     0.0, 0.0,
     -7.9383, 50.5446;
 
-    Matrix6d Q = Matrix6d::Zero();
-    for (size_t i = 0; i < kLqrStateSize; ++i) {
+    tinyMatrix Adyn = tinyMatrix::Identity(kMpcStateSize, kMpcStateSize) + kMpcDt * A_cont;
+    tinyMatrix Bdyn = kMpcDt * B_cont;
+    tinyVector fdyn = tinyVector::Zero(kMpcStateSize);
+
+    tinyMatrix Q = tinyMatrix::Zero(kMpcStateSize, kMpcStateSize);
+    for (size_t i = 0; i < kMpcStateSize; ++i) {
+        if (!std::isfinite(q_diag[i]) || q_diag[i] < 0.0) {
+            error = "q_diag values must be finite and greater than or equal to 0";
+            return false;
+        }
         Q(i, i) = q_diag[i];
     }
 
-    Matrix2d R_inv = Matrix2d::Zero();
-    for (size_t i = 0; i < kLqrInputSize; ++i) {
-        if (r_diag[i] <= 0.0 || !std::isfinite(r_diag[i])) {
+    tinyMatrix R = tinyMatrix::Zero(kMpcInputSize, kMpcInputSize);
+    for (size_t i = 0; i < kMpcInputSize; ++i) {
+        if (!std::isfinite(r_diag[i]) || r_diag[i] <= 0.0) {
             error = "r_diag values must be finite and greater than 0";
             return false;
         }
-        R_inv(i, i) = 1.0 / r_diag[i];
+        R(i, i) = r_diag[i];
     }
 
-    Matrix12d H                                                                  = Matrix12d::Zero();
-    H.template block<kLqrStateSize, kLqrStateSize>(0, 0)                         = A;
-    H.template block<kLqrStateSize, kLqrStateSize>(0, kLqrStateSize)             = -B * R_inv * B.transpose();
-    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, 0)             = -Q;
-    H.template block<kLqrStateSize, kLqrStateSize>(kLqrStateSize, kLqrStateSize) = -A.transpose();
-
-    Eigen::ComplexEigenSolver<Matrix12d> eigen_solver(H);
-    if (eigen_solver.info() != Eigen::Success) {
-        error = "Hamiltonian eigen decomposition failed";
+    TinySolver* next_solver = nullptr;
+    int status = tiny_setup(&next_solver, Adyn, Bdyn, fdyn, Q, R, kMpcRho, kMpcStateSize, kMpcInputSize, kMpcHorizon, 0);
+    if (status != 0 || next_solver == nullptr) {
+        delete_tiny_solver(next_solver);
+        error = "tiny_setup failed";
         return false;
     }
 
-    const auto eigenvalues  = eigen_solver.eigenvalues();
-    const auto eigenvectors = eigen_solver.eigenvectors();
-    std::array<int, kLqrStateSize> stable_indices{};
-    size_t stable_count = 0;
-    for (int i = 0; i < eigenvalues.size(); ++i) {
-        if (eigenvalues[i].real() < -1.0e-8) {
-            if (stable_count >= stable_indices.size()) {
-                error = "Riccati Hamiltonian has too many stable eigenvalues";
-                return false;
-            }
-            stable_indices[stable_count++] = i;
+    tinyMatrix x_min = tinyMatrix::Constant(kMpcStateSize, kMpcHorizon, -1.0e17);
+    tinyMatrix x_max = tinyMatrix::Constant(kMpcStateSize, kMpcHorizon, 1.0e17);
+    tinyMatrix u_min = tinyMatrix::Zero(kMpcInputSize, kMpcHorizon - 1);
+    tinyMatrix u_max = tinyMatrix::Zero(kMpcInputSize, kMpcHorizon - 1);
+    u_min.row(0).setConstant(-10.0);
+    u_max.row(0).setConstant(10.0);
+    u_min.row(1).setConstant(-input_torque_limit);
+    u_max.row(1).setConstant(input_torque_limit);
+
+    status = tiny_set_bound_constraints(next_solver, x_min, x_max, u_min, u_max);
+    if (status != 0) {
+        delete_tiny_solver(next_solver);
+        error = "tiny_set_bound_constraints failed";
+        return false;
+    }
+
+    next_solver->settings->max_iter          = kMpcMaxIter;
+    next_solver->settings->check_termination = kMpcMaxIter + 1;
+    next_solver->settings->abs_pri_tol       = kMpcAbsTol;
+    next_solver->settings->abs_dua_tol       = kMpcAbsTol;
+
+    TinySolver* old_solver = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mpc_solver_mutex_);
+        old_solver  = static_cast<TinySolver*>(mpc_solver_);
+        mpc_solver_ = next_solver;
+    }
+    delete_tiny_solver(old_solver);
+    return true;
+}
+
+bool MPCController::solve_mpc_control(const MpcStateVector& state, const MpcStateVector& reference, Eigen::Vector2d& control) {
+    std::lock_guard<std::mutex> lock(mpc_solver_mutex_);
+    auto* solver = static_cast<TinySolver*>(mpc_solver_);
+    if (solver == nullptr) {
+        return false;
+    }
+
+    TinyWorkspace* work = solver->work;
+    work->x.col(0)     = state;
+    for (int i = 0; i < kMpcHorizon; ++i) {
+        work->Xref.col(i) = reference;
+        if (i < kMpcHorizon - 1) {
+            work->Uref.col(i).setZero();
         }
     }
 
-    if (stable_count != kLqrStateSize) {
-        error = "Riccati Hamiltonian did not provide a 6-dimensional stable subspace";
-        return false;
+    (void)tiny_solve(solver);
+    control = work->u.col(0);
+    return std::isfinite(control[0]) && std::isfinite(control[1]);
+}
+
+void MPCController::release_mpc_solver() {
+    TinySolver* solver = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mpc_solver_mutex_);
+        solver      = static_cast<TinySolver*>(mpc_solver_);
+        mpc_solver_ = nullptr;
     }
-
-    Matrix6cd U1;
-    Matrix6cd U2;
-    for (size_t col = 0; col < kLqrStateSize; ++col) {
-        U1.col(col) = eigenvectors.template block<kLqrStateSize, 1>(0, stable_indices[col]);
-        U2.col(col) = eigenvectors.template block<kLqrStateSize, 1>(kLqrStateSize, stable_indices[col]);
-    }
-
-    const auto U1_decomposition = U1.fullPivLu();
-    if (!U1_decomposition.isInvertible()) {
-        error = "Riccati stable subspace is singular";
-        return false;
-    }
-
-    const Matrix6cd P_complex = U2 * U1.inverse();
-    const double max_imag     = P_complex.imag().cwiseAbs().maxCoeff();
-    if (max_imag > 1.0e-5) {
-        error = "Riccati solution has a significant imaginary component";
-        return false;
-    }
-
-    Matrix6d P = P_complex.real();
-    P          = 0.5 * (P + P.transpose());
-
-    gain = R_inv * B.transpose() * P;
-    if (!gain.allFinite()) {
-        error = "Computed LQR gain contains a non-finite value";
-        return false;
-    }
-
-    const Matrix6d residual = A.transpose() * P + P * A - P * B * R_inv * B.transpose() * P + Q;
-    const double scale      = 1.0 + Q.norm() + A.norm() * P.norm() + (P * B * R_inv * B.transpose() * P).norm();
-    if (!std::isfinite(residual.norm()) || residual.norm() > 1.0e-6 * scale) {
-        error = "Riccati residual check failed";
-        return false;
-    }
-
-    return true;
+    delete_tiny_solver(solver);
 }
 
 controller_interface::CallbackReturn MPCController::on_configure(const rclcpp_lifecycle::State& previous_state) {
@@ -456,8 +471,12 @@ controller_interface::CallbackReturn MPCController::on_configure(const rclcpp_li
     wheel_diff_kp_        = get_node()->get_parameter("wheel_diff_kp").as_double();
     wheel_diff_ki_        = get_node()->get_parameter("wheel_diff_ki").as_double();
 
-    robot_exp_vel = get_node()->create_subscription<geometry_msgs::msg::Twist>(
-        kCmdVelTopic, 10, [this](const geometry_msgs::msg::Twist& msg) { expected_velocity_ = msg; });
+    std::string error;
+    if (!configure_mpc_solver(q_diag_, r_diag_, torque_limit_, error)) {
+        RCLCPP_ERROR(get_node()->get_logger(), "Failed to configure TinyMPC solver: %s", error.c_str());
+        return controller_interface::CallbackReturn::ERROR;
+    }
+
     imu_pose_subscriber_ = get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
         imu_pose_topic_, rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::PoseStamped& msg) { imu_pose_callback(msg); });
     imu_subscriber_ = get_node()->create_subscription<sensor_msgs::msg::Imu>(
@@ -527,8 +546,6 @@ controller_interface::return_type MPCController::update(const rclcpp::Time& time
         effort_interface->set_value(clamp_torque(static_cast<double>(target.torque)));
         kp_interface->set_value(static_cast<double>(target.kp));
         kd_interface->set_value(static_cast<double>(target.kd));
-        // kp_interface->set_value(static_cast<double>(target.kp));
-        // kd_interface->set_value(static_cast<double>(target.kd));
     }
 
     // 清零kp和kd指令
@@ -629,7 +646,7 @@ void MPCController::update_motor_commands(const rclcpp::Time& time, const rclcpp
         u.setZero();
     }else if(state==2)
     {
-        Eigen::Vector<double, 6> X, exp_X;
+        MpcStateVector X, exp_X;
         exp_X.setZero();
 
         if(exp_x-x>5.0)         //防止x数值爆炸
@@ -641,17 +658,15 @@ void MPCController::update_motor_commands(const rclcpp::Time& time, const rclcpp
 
         X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
 
-        lqr_gain_mutex_.lock();
-        u = K * (exp_X - X);
-        lqr_gain_mutex_.unlock();
+        if (!solve_mpc_control(X, exp_X, u)) {
+            u.setZero();
+            RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000, "TinyMPC failed to produce finite control");
+        }
     }
     else if(state==3)
     {
-        Eigen::Vector<double, 6> X;
-        X << x, dx, theta, dtheta, phi, dphi; //填写状态向量
-        lqr_gain_mutex_.lock();
-        u = -air_K*X;
-        lqr_gain_mutex_.unlock();
+        u.setZero();
+        u[1] = -(kAirThetaKp * theta + kAirThetaKd * dtheta);
     }
 
     

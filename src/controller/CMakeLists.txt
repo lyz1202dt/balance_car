@@ -41,6 +41,11 @@ pluginlib_export_plugin_description_file(controller_interface plugin.xml)
 pluginlib_export_plugin_description_file(controller_interface mpc_controller_plugin.xml)
 pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
 
+add_subdirectory(
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/TinyMPC/src/tinympc
+  ${CMAKE_CURRENT_BINARY_DIR}/tinympc
+)
+
 add_library(lqr_controller SHARED
   src/controller/controller.cpp
   src/controller/mujoco_sim.cpp
@@ -79,6 +84,8 @@ foreach(controller_target lqr_controller mpc_controller)
     ${controller_common_dependencies}
   )
 endforeach()
+
+target_link_libraries(mpc_controller tinympcstatic)
 
 install(TARGETS lqr_controller mpc_controller
   LIBRARY DESTINATION lib
