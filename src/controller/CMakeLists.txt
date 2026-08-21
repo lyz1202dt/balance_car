@@ -38,6 +38,7 @@ if(BUILD_TESTING)
 endif()
 
 pluginlib_export_plugin_description_file(controller_interface plugin.xml)
+pluginlib_export_plugin_description_file(controller_interface mpc_controller_plugin.xml)
 pluginlib_export_plugin_description_file(hardware_interface plugin.xml)
 
 add_library(lqr_controller SHARED
@@ -47,16 +48,12 @@ add_library(lqr_controller SHARED
   src/tools/leg_calc.cpp
 )
 
-target_include_directories(lqr_controller PUBLIC
-${EIGEN3_INCLUDE_DIRS}
-$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-$<INSTALL_INTERFACE:include>
+add_library(mpc_controller SHARED
+  src/controller/mpc_controller.cpp
+  src/tools/leg_calc.cpp
 )
 
-target_link_libraries(lqr_controller Eigen3::Eigen autodiff::autodiff)
-
-ament_target_dependencies(
-  lqr_controller
+set(controller_common_dependencies
   rclcpp
   controller_interface
   pluginlib
@@ -68,11 +65,27 @@ ament_target_dependencies(
   urdf
 )
 
-install(TARGETS lqr_controller
-LIBRARY DESTINATION lib)
+foreach(controller_target lqr_controller mpc_controller)
+  target_include_directories(${controller_target} PUBLIC
+    ${EIGEN3_INCLUDE_DIRS}
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(${controller_target} Eigen3::Eigen autodiff::autodiff)
+
+  ament_target_dependencies(
+    ${controller_target}
+    ${controller_common_dependencies}
+  )
+endforeach()
+
+install(TARGETS lqr_controller mpc_controller
+  LIBRARY DESTINATION lib
+)
 
 install(
-  FILES plugin.xml
+  FILES plugin.xml mpc_controller_plugin.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
