@@ -692,37 +692,6 @@ void MPCController::update_motor_commands(const rclcpp::Time& time, const rclcpp
     robot_target_.lw.torque = std::clamp<double>(left_wheel_torque, -10.0, 10.0);
     robot_target_.rw.torque = std::clamp<double>(right_wheel_torque, -10.0, 10.0);
     
-    if (state == 0)        // VMC测试
-    {
-        leg.inverse_dynamics(left_joint_pos, Eigen::Vector2d(left_leg_dis_vmc_T, leg_angle_sync_torque), left_torque);
-        leg.inverse_dynamics(right_joint_pos, Eigen::Vector2d(right_leg_dis_vmc_T, -leg_angle_sync_torque), right_torque);
-        robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
-        robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
-        robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
-        robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
-    } else if (state == 1) // 位控控制
-    {
-        Eigen::Vector2d rad = {0.0, 0.0};
-        if (leg.inverse_kinematics({0.27, 0.0}, rad)) {
-            robot_target_.l1.rad = robot_target_.r1.rad = static_cast<float>(rad[0]);
-            robot_target_.l2.rad = robot_target_.r2.rad = static_cast<float>(rad[1]);
-        }
-        robot_target_.l1.kp = robot_target_.l2.kp = robot_target_.r1.kp = robot_target_.r2.kp = 50.0;
-        robot_target_.l1.kd = robot_target_.l2.kd = robot_target_.r1.kd = robot_target_.r2.kd = 2.0;
-    } else if (state == 2) // 平衡控制
-    {
-        
-    } else if (state == 3) // 离地状态
-    {
-    //     lqr_gain_mutex_.lock();
-    //     u = air_K * (exp_X - X);
-    //     lqr_gain_mutex_.unlock();
-    //     robot_target_.l1.torque = std::clamp<double>(left_torque[0], -12.0, 12.0);
-    //     robot_target_.l2.torque = std::clamp<double>(left_torque[1], -12.0, 12.0);
-    //     robot_target_.r1.torque = std::clamp<double>(right_torque[0], -12.0, 12.0);
-    //     robot_target_.r2.torque = std::clamp<double>(right_torque[1], -12.0, 12.0);
-    }
-
     RCLCPP_INFO_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 100,
         "state=%d\nF=(%.4f,%.4f)\nu:(T=%.4f,Tp=%.4f)\nlength=(%.4f,%.4f)",
